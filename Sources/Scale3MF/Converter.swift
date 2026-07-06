@@ -29,11 +29,12 @@ struct ConversionResult {
     let sae: String
     let metric: String
     let scaleFactor: Double
+    let zScaleFactor: Double
     let transformScaled: Bool
 }
 
 final class Converter {
-    static func scale(input: URL, sae: String, type: FastenerType = .hexHead) throws -> ConversionResult {
+    static func scale(input: URL, sae: String, type: FastenerType = .hexHead, zFactor: Double = 1.0) throws -> ConversionResult {
         guard input.pathExtension.lowercased() == "3mf" else {
             throw Scale3MFError.not3MF(input)
         }
@@ -41,29 +42,31 @@ final class Converter {
             throw Scale3MFError.unknownSae(sae, type)
         }
 
-        let (result, transformScaled) = try scale(input: input, factor: entry.scaleFactor)
+        let (result, transformScaled) = try scale(input: input, factor: entry.scaleFactor, zFactor: zFactor)
         return ConversionResult(input: input,
                                 output: result,
                                 sae: entry.sae,
                                 metric: entry.metric,
                                 scaleFactor: entry.scaleFactor,
+                                zScaleFactor: zFactor,
                                 transformScaled: transformScaled)
     }
 
-    static func scaleWithFactor(input: URL, factor: Double) throws -> ConversionResult {
+    static func scaleWithFactor(input: URL, factor: Double, zFactor: Double = 1.0) throws -> ConversionResult {
         guard input.pathExtension.lowercased() == "3mf" else {
             throw Scale3MFError.not3MF(input)
         }
-        let (result, transformScaled) = try scale(input: input, factor: factor)
+        let (result, transformScaled) = try scale(input: input, factor: factor, zFactor: zFactor)
         return ConversionResult(input: input,
                                 output: result,
                                 sae: "custom",
                                 metric: "custom",
                                 scaleFactor: factor,
+                                zScaleFactor: zFactor,
                                 transformScaled: transformScaled)
     }
 
-    private static func scale(input: URL, factor: Double) throws -> (URL, Bool) {
+    private static func scale(input: URL, factor: Double, zFactor: Double = 1.0) throws -> (URL, Bool) {
         let data = try Data(contentsOf: input)
         let archive = try Archive(data: data, accessMode: .update)
 
@@ -74,10 +77,13 @@ final class Converter {
         var modelData = Data()
         _ = try archive.extract(modelEntry) { chunk in modelData.append(chunk) }
 
-        let (scaledData, transformScaled) = try scaleModelXML(modelData, factor: factor)
+        let (scaledData, transformScaled) = try scaleModelXML(modelData, factor: factor, zFactor: zFactor)
 
         let stem = input.deletingPathExtension().lastPathComponent
-        let outputName = "\(stem)_s\(String(format: "%.3f", factor)).3mf"
+        var outputName = "\(stem)_s\(String(format: "%.3f", factor)).3mf"
+        if zFactor != 1.0 {
+            outputName = "\(stem)_s\(String(format: "%.3f", factor))_z\(String(format: "%.3f", zFactor)).3mf"
+        }
         let output = input.deletingLastPathComponent().appendingPathComponent(outputName)
 
         try archive.remove(modelEntry)
@@ -98,9 +104,9 @@ final class Converter {
         return (output, transformScaled)
     }
 
-    private static func scaleModelXML(_ data: Data, factor: Double) throws -> (Data, Bool) {
+    private static func scaleModelXML(_ data: Data, factor: Double, zFactor: Double = 1.0) throws -> (Data, Bool) {
         let parser = XMLParser(data: data)
-        let delegate = ModelXMLScaler(factor: factor)
+        let delegate = ModelXMLScaler(factor: factor, zFactor: zFactor)
         parser.delegate = delegate
         parser.parse()
         if let err = parser.parserError {
@@ -112,12 +118,16 @@ final class Converter {
 
 private final class ModelXMLScaler: NSObject, XMLParserDelegate {
     let factor: Double
+    let zFactor: Double
     var output = Data()
     var transformScaled = false
     var currentElement: String?
+    var elementIsEmpty: Bool = false
+    var pendingTag: String?
 
-    init(factor: Double) {
+    init(factor: Double, zFactor: Double = 1.0) {
         self.factor = factor
+        self.zFactor = zFactor
         super.init()
     }
 
@@ -131,6 +141,9 @@ private final class ModelXMLScaler: NSObject, XMLParserDelegate {
             if let x = attrs["x"], let y = attrs["y"] {
                 attrs["x"] = scaleString(x)
                 attrs["y"] = scaleString(y)
+                if zFactor != 1.0, let z = attrs["z"] {
+                    attrs["z"] = scaleStringZ(z)
+                }
             }
         } else if elementName == "item" {
             if let transform = attrs["transform"] {
@@ -139,6 +152,8 @@ private final class ModelXMLScaler: NSObject, XMLParserDelegate {
             }
         }
 
+        // Build opening tag but DON'T close with ">" yet — we need to determine
+        // if this is a self-closing element (no character content).
         var tag = "<\(elementName)"
         for (key, value) in attrs {
             let escaped = value.replacingOccurrences(of: "&", with: "&amp;")
@@ -147,32 +162,85 @@ private final class ModelXMLScaler: NSObject, XMLParserDelegate {
                 .replacingOccurrences(of: ">", with: "&gt;")
             tag += " \(key)=\"\(escaped)\""
         }
-        tag += ">"
-        if let data = tag.data(using: .utf8) {
-            output.append(data)
-        }
-    }
-
-    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
-        if let data = "</\(elementName)>".data(using: .utf8) {
-            output.append(data)
-        }
-        currentElement = nil
+        pendingTag = tag
+        elementIsEmpty = true
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
+        // If we have a pending tag and this is the first content, close the opening tag.
+        if let pending = pendingTag {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                if let data = (pending + ">").data(using: .utf8) {
+                    output.append(data)
+                }
+                pendingTag = nil
+                elementIsEmpty = false
+            } else {
+                // Whitespace-only characters — could be formatting between child elements.
+                // Don't close yet; but also don't emit whitespace as content for empty elements.
+                // We'll emit it only if the element turns out to have children.
+                return
+            }
+        }
         if let data = string.data(using: .utf8) {
             output.append(data)
         }
     }
 
     func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
+        // If we have a pending tag, close it first
+        if let pending = pendingTag {
+            if let data = (pending + ">").data(using: .utf8) {
+                output.append(data)
+            }
+            pendingTag = nil
+            elementIsEmpty = false
+        }
         output.append(CDATABlock)
+    }
+
+    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+        if let pending = pendingTag {
+            // No characters were found — self-closing element
+            if let data = (pending + "/>").data(using: .utf8) {
+                output.append(data)
+            }
+            pendingTag = nil
+        } else {
+            // Element had content — emit closing tag
+            if let data = "</\(elementName)>".data(using: .utf8) {
+                output.append(data)
+            }
+        }
+        elementIsEmpty = false
+        currentElement = nil
+    }
+
+    // MARK: - Comment handling
+
+    func parser(_ parser: XMLParser, foundComment commentText: String) {
+        // If we have a pending tag, close it first (comments can appear inside elements)
+        if let pending = pendingTag {
+            if let data = (pending + ">").data(using: .utf8) {
+                output.append(data)
+            }
+            pendingTag = nil
+            elementIsEmpty = false
+        }
+        if let data = "<!--\(commentText)-->".data(using: .utf8) {
+            output.append(data)
+        }
     }
 
     private func scaleString(_ value: String) -> String {
         guard let d = Double(value) else { return value }
         return String(format: "%g", d * factor)
+    }
+
+    private func scaleStringZ(_ value: String) -> String {
+        guard let d = Double(value) else { return value }
+        return String(format: "%g", d * zFactor)
     }
 
     private func scaleTransform(_ transform: String) -> String {
@@ -184,6 +252,15 @@ private final class ModelXMLScaler: NSObject, XMLParserDelegate {
         for idx in indicesToScale {
             if let d = Double(parts[idx]) {
                 parts[idx] = String(format: "%g", d * factor)
+            }
+        }
+        // Scale Z if zFactor != 1.0: r22 (index 8) and tz (index 11)
+        if zFactor != 1.0 {
+            if let d = Double(parts[8]) {
+                parts[8] = String(format: "%g", d * zFactor)
+            }
+            if let d = Double(parts[11]) {
+                parts[11] = String(format: "%g", d * zFactor)
             }
         }
         return parts.joined(separator: " ")

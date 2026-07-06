@@ -14,6 +14,8 @@ struct ContentView: View {
     @State private var results: [DropResult] = []
     @State private var isTargeted = false
     @State private var statusText = "Drop a .3MF file to scale"
+    @State private var zScaleEnabled = false
+    @State private var zScaleFactor: Double = 1.0
 
     private var saeSizes: [String] {
         ConversionTable.saeSizes(for: selectedFastener)
@@ -99,6 +101,25 @@ struct ContentView: View {
                     .padding(.horizontal, 10)
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
                 }
+
+                // Z Scale control
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Z Scale", isOn: $zScaleEnabled)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if zScaleEnabled {
+                        HStack {
+                            Text("Z Factor")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Slider(value: $zScaleFactor, in: 0.1...3.0, step: 0.001)
+                            Text(String(format: "%.3f", zScaleFactor))
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .frame(width: 50, alignment: .trailing)
+                        }
+                    }
+                }
             }
             .padding(.horizontal)
 
@@ -145,7 +166,7 @@ struct ContentView: View {
                 .foregroundColor(.secondary)
                 .padding(.bottom, 8)
         }
-        .frame(width: 380, height: 560)
+        .frame(width: 380, height: 620)
     }
 
     private func prioritizedTypes() -> [FastenerType] {
@@ -168,7 +189,7 @@ struct ContentView: View {
                     .foregroundColor(isTargeted ? .blue : .secondary)
                 Text("Drop .3MF files here")
                     .font(.headline)
-                Text("Z axis is never scaled")
+                Text(zScaleEnabled ? "Z axis scaled by \(String(format: "%.3f", zScaleFactor))" : "Z axis not scaled")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -205,9 +226,14 @@ struct ContentView: View {
 
     private func scaleFile(_ url: URL) {
         guard let entry = selectedEntry else { return }
+        let zf = zScaleEnabled ? zScaleFactor : 1.0
         do {
-            let result = try Converter.scale(input: url, sae: entry.sae, type: selectedFastener)
-            let msg = "Scaled by \(String(format: "%.4f", result.scaleFactor)) → \(result.output.lastPathComponent)"
+            let result = try Converter.scale(input: url, sae: entry.sae, type: selectedFastener, zFactor: zf)
+            var msg = "Scaled by \(String(format: "%.4f", result.scaleFactor))"
+            if zf != 1.0 {
+                msg += " Z: \(String(format: "%.4f", zf))"
+            }
+            msg += " → \(result.output.lastPathComponent)"
             results.append(DropResult(inputName: url.lastPathComponent, outputName: result.output.lastPathComponent, success: true, message: msg))
             statusText = "✓ \(result.output.lastPathComponent)"
         } catch {

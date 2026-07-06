@@ -7,6 +7,7 @@ var input: String?
 var sae: String?
 var fastenerType: FastenerType = .hexHead
 var factor: Double?
+var zFactor: Double = 1.0
 var output: String?
 var i = 0
 while i < args.count {
@@ -22,6 +23,9 @@ while i < args.count {
     } else if arg == "--factor" {
         i += 1
         if i < args.count { factor = Double(args[i]) }
+    } else if arg == "--z" {
+        i += 1
+        if i < args.count { zFactor = Double(args[i]) ?? 1.0 }
     } else if arg == "-o" {
         i += 1
         if i < args.count { output = args[i] }
@@ -46,11 +50,11 @@ if let inputPath = input {
     do {
         let result: ConversionResult
         if let s = sae {
-            result = try Converter.scale(input: inputURL, sae: s, type: fastenerType)
+            result = try Converter.scale(input: inputURL, sae: s, type: fastenerType, zFactor: zFactor)
         } else if let f = factor {
-            result = try Converter.scaleWithFactor(input: inputURL, factor: f)
+            result = try Converter.scaleWithFactor(input: inputURL, factor: f, zFactor: zFactor)
         } else {
-            result = try Converter.scale(input: inputURL, sae: "5/16", type: fastenerType)
+            result = try Converter.scale(input: inputURL, sae: "5/16", type: fastenerType, zFactor: zFactor)
         }
 
         if let outputPath = output {
@@ -64,6 +68,9 @@ if let inputPath = input {
             print("Wrote \(result.output.path)")
         }
         print("Scale factor: \(String(format: "%.4f", result.scaleFactor)) (metric \(result.metric))")
+        if result.zScaleFactor != 1.0 {
+            print("Z scale factor: \(String(format: "%.4f", result.zScaleFactor))")
+        }
     } catch {
         print("Error: \(error.localizedDescription)")
         exit(1)
