@@ -229,13 +229,13 @@ struct ContentView: View {
         let zf = zScaleEnabled ? zScaleFactor : 1.0
         do {
             let result = try Converter.scale(input: url, sae: entry.sae, type: selectedFastener, zFactor: zf)
-            var msg = "Scaled by \(String(format: "%.4f", result.scaleFactor))"
+            var msg = "\(entry.sae)\" (\(entry.metric)) scaled \(String(format: "%.4f", result.scaleFactor))"
             if zf != 1.0 {
                 msg += " Z: \(String(format: "%.4f", zf))"
             }
             msg += " → \(result.output.lastPathComponent)"
             results.append(DropResult(inputName: url.lastPathComponent, outputName: result.output.lastPathComponent, success: true, message: msg))
-            statusText = "✓ \(result.output.lastPathComponent)"
+            statusText = "✓ \(entry.sae)\" (\(entry.metric)) × \(String(format: "%.3f", result.scaleFactor)) → \(result.output.lastPathComponent)"
         } catch {
             results.append(DropResult(inputName: url.lastPathComponent, outputName: "", success: false, message: error.localizedDescription))
             statusText = "✗ \(error.localizedDescription)"

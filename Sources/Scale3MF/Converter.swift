@@ -41,7 +41,8 @@ final class Converter {
         guard let entry = ConversionTable.entry(forSae: sae, type: type) else {
             throw Scale3MFError.unknownSae(sae, type)
         }
-        let (result, transformScaled) = try scale(input: input, factor: entry.scaleFactor, zFactor: zFactor)
+        let saeFile = entry.sae.replacingOccurrences(of: "/", with: "-")
+        let (result, transformScaled) = try scale(input: input, factor: entry.scaleFactor, zFactor: zFactor, saeLabel: saeFile)
         return ConversionResult(input: input, output: result, sae: entry.sae, metric: entry.metric,
                                 scaleFactor: entry.scaleFactor, zScaleFactor: zFactor, transformScaled: transformScaled)
     }
@@ -50,12 +51,12 @@ final class Converter {
         guard input.pathExtension.lowercased() == "3mf" else {
             throw Scale3MFError.not3MF(input)
         }
-        let (result, transformScaled) = try scale(input: input, factor: factor, zFactor: zFactor)
+        let (result, transformScaled) = try scale(input: input, factor: factor, zFactor: zFactor, saeLabel: "custom")
         return ConversionResult(input: input, output: result, sae: "custom", metric: "custom",
                                 scaleFactor: factor, zScaleFactor: zFactor, transformScaled: transformScaled)
     }
 
-    private static func scale(input: URL, factor: Double, zFactor: Double = 1.0) throws -> (URL, Bool) {
+    private static func scale(input: URL, factor: Double, zFactor: Double = 1.0, saeLabel: String = "") throws -> (URL, Bool) {
         let data = try Data(contentsOf: input)
         let archive = try Archive(data: data, accessMode: .read)
 
@@ -77,10 +78,14 @@ final class Converter {
         }
 
         let stem = input.deletingPathExtension().lastPathComponent
-        var outputName = "\(stem)_s\(String(format: "%.3f", factor)).3mf"
-        if zFactor != 1.0 {
-            outputName = "\(stem)_s\(String(format: "%.3f", factor))_z\(String(format: "%.3f", zFactor)).3mf"
+        var outputName = "\(stem)_s\(String(format: "%.3f", factor))"
+        if !saeLabel.isEmpty {
+            outputName += "_\(saeLabel)"
         }
+        if zFactor != 1.0 {
+            outputName += "_z\(String(format: "%.3f", zFactor))"
+        }
+        outputName += ".3mf"
         let output = input.deletingLastPathComponent().appendingPathComponent(outputName)
 
         // Create a new archive: copy all entries, replacing scaled .model files
