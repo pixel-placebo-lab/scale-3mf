@@ -10,7 +10,7 @@ struct DropResult: Identifiable {
 
 struct ContentView: View {
     @State private var selectedFastener: FastenerType = .hexHead
-    @State private var selectedSAE: String = "5/16"
+    @State private var selectedSAE: String = "1/4"
     @State private var results: [DropResult] = []
     @State private var isTargeted = false
     @State private var statusText = "Drop a .3MF file to scale"

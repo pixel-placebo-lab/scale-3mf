@@ -55,7 +55,7 @@ enum FastenerType: String, CaseIterable, Identifiable, Hashable {
 }
 
 struct ConversionTable {
-    static let appVersion = "v1.0.0"
+    static let appVersion = "v1.1.0"
 
     // Fallback hex head data (used if JSON fails to load)
     static let fallbackEntries: [SAEEntry] = [
