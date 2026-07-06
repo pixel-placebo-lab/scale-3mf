@@ -15,7 +15,7 @@ enum Scale3MFError: LocalizedError {
         case .not3MF(let url): return "Not a .3mf file: \(url.lastPathComponent)"
         case .readFailed(let url, let err): return "Could not read \(url.lastPathComponent): \(err.localizedDescription)"
         case .archiveFailed(let msg): return "Archive error: \(msg)"
-        case .noModelEntry: return "3MF archive missing 3D/3dmodel.model"
+        case .noModelEntry: return "3MF archive missing .model files in 3D/"
         case .xmlParseFailed(let err): return "XML parse failed: \(err.localizedDescription)"
         case .writeFailed(let url, let err): return "Could not write \(url.lastPathComponent): \(err.localizedDescription)"
         case .unknownSae(let s, let t): return "Unknown SAE size '\(s)' for fastener type '\(t.rawValue)'"
@@ -41,15 +41,9 @@ final class Converter {
         guard let entry = ConversionTable.entry(forSae: sae, type: type) else {
             throw Scale3MFError.unknownSae(sae, type)
         }
-
         let (result, transformScaled) = try scale(input: input, factor: entry.scaleFactor, zFactor: zFactor)
-        return ConversionResult(input: input,
-                                output: result,
-                                sae: entry.sae,
-                                metric: entry.metric,
-                                scaleFactor: entry.scaleFactor,
-                                zScaleFactor: zFactor,
-                                transformScaled: transformScaled)
+        return ConversionResult(input: input, output: result, sae: entry.sae, metric: entry.metric,
+                                scaleFactor: entry.scaleFactor, zScaleFactor: zFactor, transformScaled: transformScaled)
     }
 
     static func scaleWithFactor(input: URL, factor: Double, zFactor: Double = 1.0) throws -> ConversionResult {
@@ -57,27 +51,30 @@ final class Converter {
             throw Scale3MFError.not3MF(input)
         }
         let (result, transformScaled) = try scale(input: input, factor: factor, zFactor: zFactor)
-        return ConversionResult(input: input,
-                                output: result,
-                                sae: "custom",
-                                metric: "custom",
-                                scaleFactor: factor,
-                                zScaleFactor: zFactor,
-                                transformScaled: transformScaled)
+        return ConversionResult(input: input, output: result, sae: "custom", metric: "custom",
+                                scaleFactor: factor, zScaleFactor: zFactor, transformScaled: transformScaled)
     }
 
     private static func scale(input: URL, factor: Double, zFactor: Double = 1.0) throws -> (URL, Bool) {
         let data = try Data(contentsOf: input)
-        let archive = try Archive(data: data, accessMode: .update)
+        let archive = try Archive(data: data, accessMode: .read)
 
-        guard let modelEntry = archive["3D/3dmodel.model"] else {
+        // Find ALL .model files in the archive (3D/3dmodel.model + 3D/Objects/*.model)
+        let modelEntries = archive.filter { $0.path.hasSuffix(".model") && $0.path.hasPrefix("3D/") }
+        guard !modelEntries.isEmpty else {
             throw Scale3MFError.noModelEntry
         }
 
-        var modelData = Data()
-        _ = try archive.extract(modelEntry) { chunk in modelData.append(chunk) }
+        var anyTransformScaled = false
+        var scaledFiles: [(path: String, data: Data)] = []
 
-        let (scaledData, transformScaled) = try scaleModelXML(modelData, factor: factor, zFactor: zFactor)
+        for entry in modelEntries {
+            var modelData = Data()
+            _ = try archive.extract(entry) { chunk in modelData.append(chunk) }
+            let (scaledData, transformScaled) = scaleModelXML(modelData, factor: factor, zFactor: zFactor)
+            if transformScaled { anyTransformScaled = true }
+            scaledFiles.append((entry.path, scaledData))
+        }
 
         let stem = input.deletingPathExtension().lastPathComponent
         var outputName = "\(stem)_s\(String(format: "%.3f", factor)).3mf"
@@ -86,183 +83,109 @@ final class Converter {
         }
         let output = input.deletingLastPathComponent().appendingPathComponent(outputName)
 
-        try archive.remove(modelEntry)
-        try archive.addEntry(with: "3D/3dmodel.model",
-                              type: .file,
-                              uncompressedSize: Int64(scaledData.count),
-                              modificationDate: Date(),
-                              compressionMethod: .deflate,
-                              provider: { position, size in
-                                  let end = position + Int64(size)
-                                  return scaledData.subdata(in: Int(position)..<Int(end))
-                              })
-        guard let outputArchiveData = archive.data else {
+        // Create a new archive: copy all entries, replacing scaled .model files
+        let scaledMap = Dictionary(uniqueKeysWithValues: scaledFiles)
+        let scaledPaths = Set(scaledMap.keys)
+
+        let outArchive = try Archive(data: Data(), accessMode: .create)
+        for entry in archive {
+            if scaledPaths.contains(entry.path) {
+                let sd = scaledMap[entry.path]!
+                try outArchive.addEntry(with: entry.path, type: .file,
+                    uncompressedSize: Int64(sd.count), modificationDate: Date(), compressionMethod: .deflate,
+                    provider: { pos, size in
+                        let end = pos + Int64(size)
+                        return sd.subdata(in: Int(pos)..<Int(end))
+                    })
+            } else {
+                var entryData = Data()
+                _ = try archive.extract(entry) { chunk in entryData.append(chunk) }
+                try outArchive.addEntry(with: entry.path, type: entry.type,
+                    uncompressedSize: Int64(entryData.count), modificationDate: Date(), compressionMethod: .deflate,
+                    provider: { pos, size in
+                        let end = pos + Int64(size)
+                        return entryData.subdata(in: Int(pos)..<Int(end))
+                    })
+            }
+        }
+        guard let outputArchiveData = outArchive.data else {
             throw Scale3MFError.archiveFailed("Could not finalize archive")
         }
         try outputArchiveData.write(to: output)
-
-        return (output, transformScaled)
+        return (output, anyTransformScaled)
     }
 
-    private static func scaleModelXML(_ data: Data, factor: Double, zFactor: Double = 1.0) throws -> (Data, Bool) {
-        let parser = XMLParser(data: data)
-        let delegate = ModelXMLScaler(factor: factor, zFactor: zFactor)
-        parser.delegate = delegate
-        parser.parse()
-        if let err = parser.parserError {
-            throw Scale3MFError.xmlParseFailed(err)
+    // MARK: - Regex-based XML scaling
+
+    private static func scaleModelXML(_ data: Data, factor: Double, zFactor: Double = 1.0) -> (Data, Bool) {
+        guard let xml = String(data: data, encoding: .utf8) else { return (data, false) }
+
+        // Transform pattern: transform="r00 r01 r02 r10 r11 r12 r20 r21 r22 tx ty tz"
+        let transformPattern = try! NSRegularExpression(
+            pattern: "transform=\"(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\"",
+            options: []
+        )
+
+        // Vertex pattern: <vertex x="..." y="..." z="..."
+        let vertexPattern = try! NSRegularExpression(
+            pattern: "<vertex\\s+x=\"([-\\d.]+)\"\\s+y=\"([-\\d.]+)\"\\s+z=\"([-\\d.]+)\"",
+            options: []
+        )
+
+        var transformScaled = false
+        var result = xml
+
+        // Scale transforms
+        result = replaceMatches(pattern: transformPattern, in: result) { match, str in
+            transformScaled = true
+            func g(_ i: Int) -> Double {
+                guard let r = Range(match.range(at: i), in: str), let d = Double(str[r]) else { return 0 }
+                return d
+            }
+            let r00 = g(1) * factor, r01 = g(2) * factor, r02 = g(3)
+            let r10 = g(4) * factor, r11 = g(5) * factor, r12 = g(6)
+            let r20 = g(7), r21 = g(8)
+            var r22 = g(9)
+            var tx = g(10) * factor, ty = g(11) * factor, tz = g(12)
+            if zFactor != 1.0 { r22 *= zFactor; tz *= zFactor }
+            let fmt = { String(format: "%g", $0) }
+            return "transform=\"\(fmt(r00)) \(fmt(r01)) \(fmt(r02)) \(fmt(r10)) \(fmt(r11)) \(fmt(r12)) \(fmt(r20)) \(fmt(r21)) \(fmt(r22)) \(fmt(tx)) \(fmt(ty)) \(fmt(tz))\""
         }
-        return (delegate.outputData, delegate.transformScaled)
-    }
-}
 
-private final class ModelXMLScaler: NSObject, XMLParserDelegate {
-    let factor: Double
-    let zFactor: Double
-    var output = Data()
-    var transformScaled = false
-    var currentElement: String?
-    var elementIsEmpty: Bool = false
-    var pendingTag: String?
-
-    init(factor: Double, zFactor: Double = 1.0) {
-        self.factor = factor
-        self.zFactor = zFactor
-        super.init()
-    }
-
-    var outputData: Data { output }
-
-    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String] = [:]) {
-        currentElement = elementName
-        var attrs = attributeDict
-
-        if elementName == "vertex" {
-            if let x = attrs["x"], let y = attrs["y"] {
-                attrs["x"] = scaleString(x)
-                attrs["y"] = scaleString(y)
-                if zFactor != 1.0, let z = attrs["z"] {
-                    attrs["z"] = scaleStringZ(z)
+        // Scale vertices (only if no transforms were found in this file)
+        var vertexScaled = false
+        if !transformScaled {
+            result = replaceMatches(pattern: vertexPattern, in: result) { match, str in
+                vertexScaled = true
+                func g(_ i: Int) -> Double {
+                    guard let r = Range(match.range(at: i), in: str), let d = Double(str[r]) else { return 0 }
+                    return d
                 }
-            }
-        } else if elementName == "item" {
-            if let transform = attrs["transform"] {
-                attrs["transform"] = scaleTransform(transform)
-                transformScaled = true
+                let sx = g(1) * factor, sy = g(2) * factor
+                let sz = zFactor != 1.0 ? g(3) * zFactor : g(3)
+                let fmt = { String(format: "%g", $0) }
+                return "<vertex x=\"\(fmt(sx))\" y=\"\(fmt(sy))\" z=\"\(fmt(sz))\""
             }
         }
 
-        // Build opening tag but DON'T close with ">" yet — we need to determine
-        // if this is a self-closing element (no character content).
-        var tag = "<\(elementName)"
-        for (key, value) in attrs {
-            let escaped = value.replacingOccurrences(of: "&", with: "&amp;")
-                .replacingOccurrences(of: "\"", with: "&quot;")
-                .replacingOccurrences(of: "<", with: "&lt;")
-                .replacingOccurrences(of: ">", with: "&gt;")
-            tag += " \(key)=\"\(escaped)\""
-        }
-        pendingTag = tag
-        elementIsEmpty = true
+        let scaledData = result.data(using: .utf8) ?? data
+        return (scaledData, transformScaled || vertexScaled)
     }
 
-    func parser(_ parser: XMLParser, foundCharacters string: String) {
-        // If we have a pending tag and this is the first content, close the opening tag.
-        if let pending = pendingTag {
-            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                if let data = (pending + ">").data(using: .utf8) {
-                    output.append(data)
-                }
-                pendingTag = nil
-                elementIsEmpty = false
-            } else {
-                // Whitespace-only characters — could be formatting between child elements.
-                // Don't close yet; but also don't emit whitespace as content for empty elements.
-                // We'll emit it only if the element turns out to have children.
-                return
-            }
+    private static func replaceMatches(pattern: NSRegularExpression, in string: String,
+                                        using replacer: (NSTextCheckingResult, String) -> String) -> String {
+        var result = ""
+        var lastEnd = string.startIndex
+        let nsString = string as NSString
+        let range = NSRange(location: 0, length: nsString.length)
+        pattern.enumerateMatches(in: string, options: [], range: range) { match, flags, _ in
+            guard let match = match else { return }
+            guard let matchRange = Range(match.range, in: string) else { return }
+            result += string[lastEnd..<matchRange.lowerBound]
+            result += replacer(match, string)
+            lastEnd = matchRange.upperBound
         }
-        if let data = string.data(using: .utf8) {
-            output.append(data)
-        }
-    }
-
-    func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
-        // If we have a pending tag, close it first
-        if let pending = pendingTag {
-            if let data = (pending + ">").data(using: .utf8) {
-                output.append(data)
-            }
-            pendingTag = nil
-            elementIsEmpty = false
-        }
-        output.append(CDATABlock)
-    }
-
-    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
-        if let pending = pendingTag {
-            // No characters were found — self-closing element
-            if let data = (pending + "/>").data(using: .utf8) {
-                output.append(data)
-            }
-            pendingTag = nil
-        } else {
-            // Element had content — emit closing tag
-            if let data = "</\(elementName)>".data(using: .utf8) {
-                output.append(data)
-            }
-        }
-        elementIsEmpty = false
-        currentElement = nil
-    }
-
-    // MARK: - Comment handling
-
-    func parser(_ parser: XMLParser, foundComment commentText: String) {
-        // If we have a pending tag, close it first (comments can appear inside elements)
-        if let pending = pendingTag {
-            if let data = (pending + ">").data(using: .utf8) {
-                output.append(data)
-            }
-            pendingTag = nil
-            elementIsEmpty = false
-        }
-        if let data = "<!--\(commentText)-->".data(using: .utf8) {
-            output.append(data)
-        }
-    }
-
-    private func scaleString(_ value: String) -> String {
-        guard let d = Double(value) else { return value }
-        return String(format: "%g", d * factor)
-    }
-
-    private func scaleStringZ(_ value: String) -> String {
-        guard let d = Double(value) else { return value }
-        return String(format: "%g", d * zFactor)
-    }
-
-    private func scaleTransform(_ transform: String) -> String {
-        var parts = transform.components(separatedBy: " ")
-        guard parts.count == 12 else { return transform }
-        // 3MF transform: r00 r01 r02 r10 r11 r12 r20 r21 r22 tx ty tz
-        // Scale X/Y columns: r00, r01, r10, r11, tx, ty (indices 0,1,3,4,9,10)
-        let indicesToScale = [0, 1, 3, 4, 9, 10]
-        for idx in indicesToScale {
-            if let d = Double(parts[idx]) {
-                parts[idx] = String(format: "%g", d * factor)
-            }
-        }
-        // Scale Z if zFactor != 1.0: r22 (index 8) and tz (index 11)
-        if zFactor != 1.0 {
-            if let d = Double(parts[8]) {
-                parts[8] = String(format: "%g", d * zFactor)
-            }
-            if let d = Double(parts[11]) {
-                parts[11] = String(format: "%g", d * zFactor)
-            }
-        }
-        return parts.joined(separator: " ")
+        result += string[lastEnd..<string.endIndex]
+        return result
     }
 }

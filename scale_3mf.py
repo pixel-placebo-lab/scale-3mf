@@ -110,15 +110,19 @@ def scale_3mf(input_path, scale_xy=1.0, scale_z=1.0, output_path=None):
         if not os.path.isdir(model_dir):
             sys.exit(f"Error: No 3D/ directory found in {input_path}")
 
-        model_files = [f for f in os.listdir(model_dir) if f.endswith('.model')]
+        # Find ALL .model files recursively (3D/3dmodel.xml + 3D/Objects/*.model)
+        model_files = []
+        for root, dirs, files in os.walk(model_dir):
+            for f in files:
+                if f.endswith('.model'):
+                    model_files.append(os.path.join(root, f))
         if not model_files:
             sys.exit(f"Error: No .model file found in 3D/ directory")
 
         total_transforms = 0
         total_vertices = 0
 
-        for model_file in model_files:
-            model_path = os.path.join(model_dir, model_file)
+        for model_path in model_files:
             with open(model_path, 'r', encoding='utf-8') as f:
                 xml_content = f.read()
 
@@ -129,9 +133,12 @@ def scale_3mf(input_path, scale_xy=1.0, scale_z=1.0, output_path=None):
                 r'([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)(")'
             )
 
+            file_transforms = 0
+
             def replace_transform(m):
-                nonlocal total_transforms
+                nonlocal total_transforms, file_transforms
                 total_transforms += 1
+                file_transforms += 1
                 r00 = float(m.group(2)) * scale_xy
                 r01 = float(m.group(3)) * scale_xy
                 r02 = float(m.group(4))
@@ -159,7 +166,7 @@ def scale_3mf(input_path, scale_xy=1.0, scale_z=1.0, output_path=None):
 
             new_xml = transform_pattern.sub(replace_transform, xml_content)
 
-            if total_transforms == 0:
+            if file_transforms == 0:
                 vertex_pattern = re.compile(
                     r'(<vertex\s+x=")([-\d.]+)("\s+y=")([-\d.]+)("\s+z=")([-\d.]+)("\s*/>)'
                 )
@@ -179,9 +186,9 @@ def scale_3mf(input_path, scale_xy=1.0, scale_z=1.0, output_path=None):
 
         if total_transforms > 0:
             print(f"  ✓ Modified {total_transforms} transform matrix(es)")
-        elif total_vertices > 0:
+        if total_vertices > 0:
             print(f"  ✓ Scaled {total_vertices} vertex coordinates directly")
-        else:
+        if total_transforms == 0 and total_vertices == 0:
             print(f"  ⚠️  No transforms or vertices found to scale!")
 
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zout:
