@@ -5,10 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.1] - 2026-07-06
+## [1.1.0] - 2026-07-06
+
+### Added
+- **Swift app: Z scaling support** — `zFactor` parameter through Converter → ModelXMLScaler pipeline, `--z` CLI flag, and toggle + slider in the GUI. Scales r22 and tz in transform matrices, and vertex Z coordinates when zFactor ≠ 1.0.
 
 ### Fixed
-- **Swift app: X/Y transform scaling bug** — `scaleTransform` used wrong matrix indices `[0,1,4,5,8,9]` (scaled r00,r01,r11,r12,r20,r21) instead of correct `[0,1,3,4,9,10]` (r00,r01,r10,r11,tx,ty). This left X at 100% while Y and Z were incorrectly adjusted. Python CLI was correct all along.
+- **Swift app: Self-closing tag preservation** — `<vertex .../>` no longer expands to `<vertex ...></vertex>`. XML emission uses a pending-tag pattern: if no character content is found between start and end, the element is emitted as self-closing.
+- **Swift app: XML comment preservation** — Added `parser(_:foundComment:)` delegate method. `<!-- -->` comments survive the round-trip.
 
 ## [1.0.1] - 2026-07-06
 
