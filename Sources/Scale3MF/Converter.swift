@@ -178,7 +178,9 @@ private final class ModelXMLScaler: NSObject, XMLParserDelegate {
     private func scaleTransform(_ transform: String) -> String {
         var parts = transform.components(separatedBy: " ")
         guard parts.count == 12 else { return transform }
-        let indicesToScale = [0, 1, 4, 5, 8, 9]
+        // 3MF transform: r00 r01 r02 r10 r11 r12 r20 r21 r22 tx ty tz
+        // Scale X/Y columns: r00, r01, r10, r11, tx, ty (indices 0,1,3,4,9,10)
+        let indicesToScale = [0, 1, 3, 4, 9, 10]
         for idx in indicesToScale {
             if let d = Double(parts[idx]) {
                 parts[idx] = String(format: "%g", d * factor)
