@@ -1,0 +1,59 @@
+{
+  "_metadata": {
+    "source": "Compiled from ASME B18.2.1, ASME B18.2.2, ASME B18.3, ASME B18.16.6, ISO 4014, ISO 4032, ISO 4762, ISO 7380, DIN 931, DIN 934, DIN 985, DIN 982",
+    "units": "mm",
+    "note": "All heights are the Z-axis dimension (top to underside/flange) that determines how deep a 3D printed cap/knob needs to be. Values rounded to 2 decimal places. Use MAX values for cap design.",
+    "date_compiled": "2026-07-06"
+  },
+  "hex_head_bolt": {
+    "1/4":   {"height_mm": 5.74,  "closest_metric": "M6",  "metric_height_mm": 4.00},
+    "5/16":  {"height_mm": 6.93,  "closest_metric": "M8",  "metric_height_mm": 5.50},
+    "3/8":   {"height_mm": 8.56,  "closest_metric": "M10", "metric_height_mm": 6.63},
+    "7/16":  {"height_mm": 9.78,  "closest_metric": "M12", "metric_height_mm": 7.76},
+    "1/2":   {"height_mm": 11.38, "closest_metric": "M12", "metric_height_mm": 7.76},
+    "9/16":  {"height_mm": 12.60, "closest_metric": "M14", "metric_height_mm": 9.09},
+    "5/8":   {"height_mm": 14.20, "closest_metric": "M16", "metric_height_mm": 10.32},
+    "3/4":   {"height_mm": 16.89, "closest_metric": "M20", "metric_height_mm": 12.88},
+    "7/8":   {"height_mm": 19.71, "closest_metric": "M20", "metric_height_mm": 12.88},
+    "1":     {"height_mm": 22.53, "closest_metric": "M24", "metric_height_mm": 15.44}
+  },
+  "hex_nut": {
+    "1/4":   {"height_mm": 5.74,  "closest_metric": "M6",  "metric_height_mm": 5.20},
+    "5/16":  {"height_mm": 6.93,  "closest_metric": "M8",  "metric_height_mm": 6.80},
+    "3/8":   {"height_mm": 8.56,  "closest_metric": "M10", "metric_height_mm": 8.40},
+    "7/16":  {"height_mm": 9.78,  "closest_metric": "M12", "metric_height_mm": 10.80},
+    "1/2":   {"height_mm": 11.38, "closest_metric": "M12", "metric_height_mm": 10.80},
+    "9/16":  {"height_mm": 12.60, "closest_metric": "M14", "metric_height_mm": 12.80},
+    "5/8":   {"height_mm": 14.20, "closest_metric": "M16", "metric_height_mm": 14.80},
+    "3/4":   {"height_mm": 16.89, "closest_metric": "M20", "metric_height_mm": 18.00},
+    "7/8":   {"height_mm": 19.71, "closest_metric": "M20", "metric_height_mm": 18.00},
+    "1":     {"height_mm": 22.53, "closest_metric": "M24", "metric_height_mm": 21.50}
+  },
+  "nylock_nut": {
+    "_note": "DIN 982 / ISO 7040 (standard height) preferred over DIN 985 / ISO 10511 (low profile). Use these total heights for cap design.",
+    "1/4":   {"height_mm": 7.57,  "closest_metric": "M6",  "metric_height_mm": 7.80},
+    "5/16":  {"height_mm": 8.89,  "closest_metric": "M8",  "metric_height_mm": 9.50},
+    "3/8":   {"height_mm": 10.92, "closest_metric": "M10", "metric_height_mm": 11.50},
+    "7/16":  {"height_mm": 11.89, "closest_metric": "M12", "metric_height_mm": 14.00},
+    "1/2":   {"height_mm": 14.00, "closest_metric": "M12", "metric_height_mm": 14.00},
+    "9/16":  {"height_mm": 15.37, "closest_metric": "M14", "metric_height_mm": 16.00},
+    "5/8":   {"height_mm": 17.02, "closest_metric": "M16", "metric_height_mm": 18.00},
+    "3/4":   {"height_mm": 19.81, "closest_metric": "M20", "metric_height_mm": 22.00},
+    "7/8":   {"height_mm": 22.86, "closest_metric": "M20", "metric_height_mm": 22.00},
+    "1":     {"height_mm": 25.78, "closest_metric": "M24", "metric_height_mm": 26.70}
+  },
+  "socket_head_cap": {
+    "1/4":   {"height_mm": 6.35,  "closest_metric": "M6",  "metric_height_mm": 6.00},
+    "5/16":  {"height_mm": 7.95,  "closest_metric": "M8",  "metric_height_mm": 8.00},
+    "3/8":   {"height_mm": 9.53,  "closest_metric": "M10", "metric_height_mm": 10.00},
+    "1/2":   {"height_mm": 12.70, "closest_metric": "M12", "metric_height_mm": 12.00},
+    "5/8":   {"height_mm": 15.88, "closest_metric": "M16", "metric_height_mm": 16.00},
+    "3/4":   {"height_mm": 19.05, "closest_metric": "M20", "metric_height_mm": 20.00}
+  },
+  "button_head_cap": {
+    "1/4":   {"height_mm": 3.35,  "closest_metric": "M6",  "metric_height_mm": 3.30},
+    "5/16":  {"height_mm": 4.22,  "closest_metric": "M8",  "metric_height_mm": 4.40},
+    "3/8":   {"height_mm": 5.05,  "closest_metric": "M10", "metric_height_mm": 5.50},
+    "1/2":   {"height_mm": 6.73,  "closest_metric": "M12", "metric_height_mm": 6.60}
+  }
+}
