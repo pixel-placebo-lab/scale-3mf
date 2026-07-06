@@ -184,7 +184,7 @@ struct ConversionTable {
         }
 
         // Filter to SAE sizes only (thread must contain "/")
-        result = result.filter { $0.sae.contains("/") }
+        result = result.filter { $0.sae.contains("/") || $0.sae == "1" }
         return result.isEmpty ? nil : result
     }
 
@@ -211,13 +211,19 @@ struct ConversionTable {
 // MARK: - Formatted Table (CLI)
 extension ConversionTable {
     static func formattedTable(type: FastenerType = .hexHead) -> String {
-        let rows = entries(type: type)
+        let order = ["1/4", "5/16", "3/8", "7/16", "1/2", "9/16", "5/8", "3/4", "7/8", "1"]
+        let rows = entries(type: type).sorted { a, b in
+            (order.firstIndex(of: a.sae) ?? 99) < (order.firstIndex(of: b.sae) ?? 99)
+        }
+        func pad(_ s: String, _ width: Int) -> String {
+            if s.count >= width { return s }
+            return s + String(repeating: " ", count: width - s.count)
+        }
         var lines: [String] = []
         lines.append("\(type.displayName) - Metric to SAE Scaling Table")
-        lines.append(String(format: "%-7@ %-10@ %-7@ %-12@ %-10@", "SAE", "SAE(mm)", "Metric", "Metric(mm)", "Scale"))
+        lines.append("\(pad("SAE", 8)) \(pad("SAE(mm)", 10)) \(pad("Metric", 8)) \(pad("Metric(mm)", 12)) Scale")
         for e in rows {
-            lines.append(String(format: "%-7@ %10.2f  %-6@ %12.2f  %10.4f",
-                                e.sae, e.saeDim, e.metric, e.metricDim, e.scaleFactor))
+            lines.append("\(pad(e.sae, 8)) \(String(format: "%10.2f", e.saeDim))  \(pad(e.metric, 8)) \(String(format: "%12.2f", e.metricDim))  \(String(format: "%10.4f", e.scaleFactor))")
         }
         return lines.joined(separator: "\n")
     }

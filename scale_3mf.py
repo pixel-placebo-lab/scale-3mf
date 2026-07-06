@@ -216,11 +216,18 @@ def print_conversion_table(dim_data=None, fastener_type="hex_head"):
         print(f"{'SAE':<8} {'SAE mm':>8}  {'Metric':<8} {'Met mm':>8}  {'Scale':>8}  {'Δ':>7}")
         print("-" * 70)
         
-        for k in sorted(cat.keys()):
+        SAE_ORDER = ["1/4", "5/16", "3/8", "7/16", "1/2", "9/16", "5/8", "3/4", "7/8", "1"]
+        sae_entries = []
+        for k in cat.keys():
             entry = cat[k]
             thread = entry.get("thread", "")
-            if "/" not in thread:  # SAE sizes only
+            if not ('/' in thread or thread in ('1',)):  # SAE sizes only (includes '1' which has no slash)
                 continue
+            sae_entries.append(entry)
+        sae_entries.sort(key=lambda e: SAE_ORDER.index(e.get('thread', '')) if e.get('thread', '') in SAE_ORDER else 99)
+        
+        for entry in sae_entries:
+            thread = entry.get("thread", "")
             sae_dim = entry.get(dim_key, 0)
             metric = entry.get("closest_metric", "")
             metric_dim = entry.get(metric_dim_key, 0)
