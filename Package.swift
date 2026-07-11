@@ -16,6 +16,10 @@ let package = Package(
             dependencies: [
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ],
+            resources: [
+                .copy("fastener-dimensions.json"),
+                .copy("fastener-heights.json")
+            ],
             swiftSettings: [
                 .define("SWIFT_PACKAGE")
             ]

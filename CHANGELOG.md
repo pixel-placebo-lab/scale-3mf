@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-11
+
+### Added
+- **CLI: Full feature parity with Python CLI** — `--version`, `--help`, `--table` (with `--fastener-type`), `--list-metrics`, `--dry-run`, `--profile-table`, `--profile-scale` flags
+- **CLI: All 4 conversion directions** — Metric→SAE (`--sae`), Metric→Metric (`--metric` + `--target-metric`), SAE→Metric (`--sae` + `--target-metric`), SAE→SAE (`--sae` + `--target-sae`)
+- **CLI: 8020 extrusion profile scaling** — `--profile-scale` with 8 presets (metric→imperial and imperial→metric)
+- **App: FastenerType enum** — 5 fastener types: hex_head, hex_nut, nylock_nut, socket_head_cap, button_head_cap
+- **App: JSON-based dimension loading** — Loads `fastener-dimensions.json` and `fastener-heights.json` from bundle/CWD with hardcoded fallback
+- **App: Advanced mode GUI** — 3 modes (Simple, Advanced, 8020 Profile) with source/target type selection
+- **App: 8020 extrusion profile presets** — 8 presets with T-slot mismatch analysis
+- **App: Metric dimension lookups** — `metricDimension()` and `saeDimension()` with fallbacks for all fastener types
+- **App: Z-scale toggle + slider in GUI** — Optional Z axis scaling with visual feedback
+
+### Fixed
+- **Regex: Vertex pattern crash** — Fixed invalid character class `[ -\d.]+` (space-dash interpreted as range) → `[-\d. ]+` (dash first)
+- **ConversionTable: Lazy JSON loading** — `saeDimension()` and `metricDimension()` now ensure JSON is loaded before lookup
+- **ConversionTable: SAE dimension fallback** — Added hardcoded fallback for hex_head/hex_nut SAE dimensions when JSON unavailable
+
 ## [1.1.0] - 2026-07-06
 
 ### Added

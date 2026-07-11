@@ -55,7 +55,7 @@ enum FastenerType: String, CaseIterable, Identifiable, Hashable {
 }
 
 struct ConversionTable {
-    static let appVersion = "v1.1.0"
+    static let appVersion = "v1.3.0"
 
     // Fallback hex head data (used if JSON fails to load)
     static let fallbackEntries: [SAEEntry] = [
@@ -71,7 +71,72 @@ struct ConversionTable {
         SAEEntry(sae: "1",    saeDim: 41.28, metric: "M24", metricDim: 36.00, fastenerType: "hex_head", height: nil),
     ]
 
+    // Source metric sizes offered in Advanced mode (filtered by JSON availability when possible)
+    static let baseMetricSizes = ["M3", "M4", "M5", "M6", "M8", "M10", "M12", "M14", "M16", "M20", "M22", "M24"]
+
+    // MARK: - 8020 Extrusion Profile Data
+    // Both directions: metric→imperial and imperial→metric
+    struct ExtrusionProfile {
+        let name: String          // human-readable label
+        let sourceLabel: String   // e.g. "20×20mm, slot 8mm"
+        let targetLabel: String   // e.g. "1.00×1.00\", slot 0.250\""
+        let scale: Double         // body scale factor
+        let sourceSlot: Double    // mm
+        let targetSlot: Double    // mm
+        let isMetricToImperial: Bool
+    }
+
+    static let extrusionProfiles: [(key: String, profile: ExtrusionProfile)] = [
+        // Metric → Imperial
+        ("2020-to-1010", ExtrusionProfile(
+            name: "20×20mm → 1.00×1.00\" (1010)",
+            sourceLabel: "20×20mm, T-slot 8mm",
+            targetLabel: "1.00×1.00\", T-slot 0.250\"",
+            scale: 25.4 / 20, sourceSlot: 8.0, targetSlot: 6.35, isMetricToImperial: true)),
+        ("2020-to-1515", ExtrusionProfile(
+            name: "20×20mm → 1.50×1.50\" (1515)",
+            sourceLabel: "20×20mm, T-slot 8mm",
+            targetLabel: "1.50×1.50\", T-slot 0.370\"",
+            scale: 38.1 / 20, sourceSlot: 8.0, targetSlot: 9.40, isMetricToImperial: true)),
+        ("2040-to-1020", ExtrusionProfile(
+            name: "20×40mm → 1.00×2.00\" (1020)",
+            sourceLabel: "20×40mm, T-slot 8mm",
+            targetLabel: "1.00×2.00\", T-slot 0.250\"",
+            scale: 25.4 / 20, sourceSlot: 8.0, targetSlot: 6.35, isMetricToImperial: true)),
+        ("2040-to-1540", ExtrusionProfile(
+            name: "20×40mm → 1.50×3.00\" (1540)",
+            sourceLabel: "20×40mm, T-slot 8mm",
+            targetLabel: "1.50×3.00\", T-slot 0.370\"",
+            scale: 38.1 / 20, sourceSlot: 8.0, targetSlot: 9.40, isMetricToImperial: true)),
+        // Imperial → Metric
+        ("1010-to-2020", ExtrusionProfile(
+            name: "1.00×1.00\" → 20×20mm (1010→2020)",
+            sourceLabel: "1.00×1.00\", T-slot 0.250\"",
+            targetLabel: "20×20mm, T-slot 8mm",
+            scale: 20 / 25.4, sourceSlot: 6.35, targetSlot: 8.0, isMetricToImperial: false)),
+        ("1515-to-2020", ExtrusionProfile(
+            name: "1.50×1.50\" → 20×20mm (1515→2020)",
+            sourceLabel: "1.50×1.50\", T-slot 0.370\"",
+            targetLabel: "20×20mm, T-slot 8mm",
+            scale: 20 / 38.1, sourceSlot: 9.40, targetSlot: 8.0, isMetricToImperial: false)),
+        ("1020-to-2040", ExtrusionProfile(
+            name: "1.00×2.00\" → 20×40mm (1020→2040)",
+            sourceLabel: "1.00×2.00\", T-slot 0.250\"",
+            targetLabel: "20×40mm, T-slot 8mm",
+            scale: 20 / 25.4, sourceSlot: 6.35, targetSlot: 8.0, isMetricToImperial: false)),
+        ("1540-to-2040", ExtrusionProfile(
+            name: "1.50×3.00\" → 20×40mm (1540→2040)",
+            sourceLabel: "1.50×3.00\", T-slot 0.370\"",
+            targetLabel: "20×40mm, T-slot 8mm",
+            scale: 20 / 38.1, sourceSlot: 9.40, targetSlot: 8.0, isMetricToImperial: false)),
+    ]
+
+    static func extrusionProfile(forKey key: String) -> ExtrusionProfile? {
+        extrusionProfiles.first { $0.key == key }?.profile
+    }
+
     private static var loadedEntries: [SAEEntry]?
+    private static var dimensionsJSON: [String: [String: [String: Any]]]?
 
     static func entries(type: FastenerType = .hexHead) -> [SAEEntry] {
         let all = loadedEntries ?? (loadEntriesFromJSON() ?? fallbackEntries)
@@ -92,6 +157,72 @@ struct ConversionTable {
 
     static func saeSizes(for type: FastenerType = .hexHead) -> [String] {
         entries(type: type).map { $0.sae }
+    }
+
+    // MARK: - Metric dimension lookups (used by Advanced mode)
+
+    static func metricSizes(for type: FastenerType = .hexHead) -> [String] {
+        // Always return the full list — metricDimension() handles JSON lookup + fallback
+        return baseMetricSizes
+    }
+
+    static func metricDimension(for size: String, type: FastenerType = .hexHead) -> Double? {
+        // Ensure JSON is loaded
+        if dimensionsJSON == nil { _ = entries(type: type) }
+        let lower = size.lowercased()
+        let dimKey = (type == .hexHead || type == .hexNut || type == .nylockNut) ? "across_flats_mm" : "head_dia_mm"
+        if let dict = dimensionsJSON?[type.rawValue],
+           let entry = dict[lower] ?? dict[size],
+           let dim = entry[dimKey] as? Double, dim > 0 {
+            return dim
+        }
+        return fallbackMetricDimension(for: size, type: type)
+    }
+
+    static func saeDimension(for size: String, type: FastenerType = .hexHead) -> Double? {
+        // Ensure JSON is loaded
+        if dimensionsJSON == nil { _ = entries(type: type) }
+        let dimKey = (type == .hexHead || type == .hexNut || type == .nylockNut) ? "across_flats_mm" : "head_dia_mm"
+        if let dict = dimensionsJSON?[type.rawValue] {
+            for (_, entry) in dict {
+                if let thread = entry["thread"] as? String, thread == size,
+                   let dim = entry[dimKey] as? Double, dim > 0 {
+                    return dim
+                }
+            }
+        }
+        // Fallback to hardcoded hex head table
+        if type == .hexHead || type == .hexNut {
+            return fallbackEntries.first { $0.sae == size }?.saeDim
+        }
+        return nil
+    }
+
+    private static func fallbackMetricDimension(for size: String, type: FastenerType) -> Double? {
+        // Hardcoded fallbacks for ALL metric sizes (ISO standards)
+        // Used when JSON isn't loaded yet or size is missing from JSON
+        let upper = size.uppercased()
+        let isAF = (type == .hexHead || type == .hexNut || type == .nylockNut)
+        let isSocket = (type == .socketHeadCap)
+        let isButton = (type == .buttonHeadCap)
+        
+        let afDims: [String: Double] = [
+            "M3": 5.5, "M4": 7.0, "M5": 8.0, "M6": 10.0, "M8": 13.0,
+            "M10": 16.0, "M12": 18.0, "M14": 21.0, "M16": 24.0,
+            "M20": 30.0, "M22": 34.0, "M24": 36.0
+        ]
+        let socketDims: [String: Double] = [
+            "M3": 5.5, "M4": 7.0, "M5": 8.5, "M6": 10.0, "M8": 13.0,
+            "M10": 16.0, "M12": 18.0, "M14": 21.0, "M16": 24.0, "M20": 30.0
+        ]
+        let buttonDims: [String: Double] = [
+            "M3": 5.7, "M4": 7.6, "M5": 9.5, "M6": 10.5, "M8": 14.0, "M10": 17.5
+        ]
+        
+        if isAF { return afDims[upper] }
+        if isSocket { return socketDims[upper] }
+        if isButton { return buttonDims[upper] }
+        return nil
     }
 
     // MARK: - JSON Loading
@@ -118,6 +249,9 @@ struct ConversionTable {
               let dimJSON = try? JSONSerialization.jsonObject(with: dimData) as? [String: Any] else {
             return nil
         }
+
+        // Store raw dimensions for metric→metric / advanced lookups.
+        dimensionsJSON = dimJSON as? [String: [String: [String: Any]]]
 
         let heights = loadHeightsMap()
 
@@ -208,6 +342,7 @@ struct ConversionTable {
         return map
     }
 }
+
 // MARK: - Formatted Table (CLI)
 extension ConversionTable {
     static func formattedTable(type: FastenerType = .hexHead) -> String {
@@ -224,6 +359,26 @@ extension ConversionTable {
         lines.append("\(pad("SAE", 8)) \(pad("SAE(mm)", 10)) \(pad("Metric", 8)) \(pad("Metric(mm)", 12)) Scale")
         for e in rows {
             lines.append("\(pad(e.sae, 8)) \(String(format: "%10.2f", e.saeDim))  \(pad(e.metric, 8)) \(String(format: "%12.2f", e.metricDim))  \(String(format: "%10.4f", e.scaleFactor))")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func formattedMetricTable(type: FastenerType = .hexHead, targetMetric: String = "M5") -> String {
+        let sizes = metricSizes(for: type)
+        guard let targetDim = metricDimension(for: targetMetric, type: type) else {
+            return "Target metric \(targetMetric) not found for \(type.displayName)"
+        }
+        func pad(_ s: String, _ width: Int) -> String {
+            if s.count >= width { return s }
+            return s + String(repeating: " ", count: width - s.count)
+        }
+        var lines: [String] = []
+        lines.append("\(type.displayName) - Metric → Metric Scaling Table (target: \(targetMetric))")
+        lines.append("\(pad("Source", 8)) \(pad("Source(mm)", 12)) \(pad("Target", 8)) \(pad("Target(mm)", 12)) Scale")
+        for src in sizes {
+            guard let srcDim = metricDimension(for: src, type: type) else { continue }
+            let scale = targetDim / srcDim
+            lines.append("\(pad(src, 8)) \(String(format: "%12.2f", srcDim))  \(pad(targetMetric, 8)) \(String(format: "%12.2f", targetDim))  \(String(format: "%10.4f", scale))")
         }
         return lines.joined(separator: "\n")
     }

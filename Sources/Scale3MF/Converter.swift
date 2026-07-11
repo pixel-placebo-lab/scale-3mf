@@ -10,8 +10,6 @@ enum Scale3MFError: LocalizedError {
     case writeFailed(URL, Error)
     case unknownSae(String, FastenerType)
     case unknownMetric(String, FastenerType)
-    case noHexPocket
-    case analyzeFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -23,8 +21,6 @@ enum Scale3MFError: LocalizedError {
         case .writeFailed(let url, let err): return "Could not write \(url.lastPathComponent): \(err.localizedDescription)"
         case .unknownSae(let s, let t): return "Unknown SAE size '\(s)' for fastener type '\(t.rawValue)'"
         case .unknownMetric(let m, let t): return "Unknown metric size '\(m)' for fastener type '\(t.rawValue)'"
-        case .noHexPocket: return "No hexagonal pocket detected — is this a fastener knob?"
-        case .analyzeFailed(let msg): return "Analysis failed: \(msg)"
         }
     }
 }
@@ -37,32 +33,6 @@ struct ConversionResult {
     let scaleFactor: Double
     let zScaleFactor: Double
     let transformScaled: Bool
-}
-
-// Measure mode result — includes detected pocket info
-struct MeasureResult {
-    let input: URL
-    let output: URL
-    let detectedAF: Double
-    let targetAF: Double
-    let clearance: Double
-    let scaleFactor: Double
-    let zScaleFactor: Double
-    let pocketZ: Double
-    let transformScaled: Bool
-}
-
-// Hex pocket detection result
-struct HexFeature: Identifiable, Hashable {
-    let id = UUID()
-    let afMM: Double
-    let zHeight: Double
-    let circumradius: Double
-    let vertexCount: Int
-    let centerX: Double
-    let centerY: Double
-
-    var isLikelyPocket: Bool { afMM >= 4.0 && afMM <= 30.0 }
 }
 
 final class Converter {
@@ -184,43 +154,6 @@ final class Converter {
                                 scaleFactor: profile.scale, zScaleFactor: zFactor, transformScaled: transformScaled)
     }
 
-    // MARK: - Measure Mode
-
-    /// Analyze a 3MF file for hexagonal pockets.
-    static func analyzeHexPockets(in input: URL) throws -> [HexFeature] {
-        guard input.pathExtension.lowercased() == "3mf" else {
-            throw Scale3MFError.not3MF(input)
-        }
-        let vertices = try extractVertices(from: input)
-        if vertices.isEmpty {
-            throw Scale3MFError.analyzeFailed("No vertices found in 3MF file")
-        }
-        return HexPocketAnalyzer.findHexagons(in: vertices)
-    }
-
-    /// Measure mode: auto-detect hex pocket AF and scale to user-specified target.
-    static func scaleMeasure(input: URL, targetAF: Double, clearance: Double = 0.15,
-                             zFactor: Double = 1.0) throws -> MeasureResult {
-        guard input.pathExtension.lowercased() == "3mf" else {
-            throw Scale3MFError.not3MF(input)
-        }
-        let hexagons = try analyzeHexPockets(in: input)
-        guard let pocket = HexPocketAnalyzer.findBoltPocket(in: hexagons) else {
-            throw Scale3MFError.noHexPocket
-        }
-
-        let totalTarget = targetAF + clearance
-        let factor = totalTarget / pocket.afMM
-        let label = String(format: "measured_%.2f", totalTarget)
-        let (output, transformScaled) = try scale(input: input, factor: factor, zFactor: zFactor, targetLabel: label)
-
-        return MeasureResult(input: input, output: output,
-                             detectedAF: pocket.afMM, targetAF: targetAF,
-                             clearance: clearance, scaleFactor: factor,
-                             zScaleFactor: zFactor, pocketZ: pocket.zHeight,
-                             transformScaled: transformScaled)
-    }
-
     // MARK: - Core scaling engine
 
     private static func scale(input: URL, factor: Double, zFactor: Double = 1.0, targetLabel: String = "") throws -> (URL, Bool) {
@@ -290,74 +223,6 @@ final class Converter {
         return (output, anyTransformScaled)
     }
 
-    // MARK: - Vertex Extraction (for Measure mode)
-
-    private static func extractVertices(from input: URL) throws -> [(Double, Double, Double)] {
-        let data = try Data(contentsOf: input)
-        let archive = try Archive(data: data, accessMode: .read)
-        let modelEntries = archive.filter { $0.path.hasSuffix(".model") && $0.path.hasPrefix("3D/") }
-        guard !modelEntries.isEmpty else {
-            throw Scale3MFError.noModelEntry
-        }
-
-        var allVertices: [(Double, Double, Double)] = []
-
-        for entry in modelEntries {
-            var modelData = Data()
-            _ = try archive.extract(entry) { chunk in modelData.append(chunk) }
-            guard let xml = String(data: modelData, encoding: .utf8) else { continue }
-
-            // Extract transform matrices
-            let transformPattern = try! NSRegularExpression(
-                pattern: "transform=\"([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\\s+([\\S]+)\"",
-                options: []
-            )
-            var transforms: [[Double]] = []
-            let nsXml = xml as NSString
-            transformPattern.enumerateMatches(in: xml, options: [], range: NSRange(location: 0, length: nsXml.length)) { match, _, _ in
-                guard let match = match else { return }
-                var t: [Double] = []
-                for i in 1...12 {
-                    guard let r = Range(match.range(at: i), in: xml), let d = Double(xml[r]) else { return }
-                    t.append(d)
-                }
-                transforms.append(t)
-            }
-
-            // Extract vertices
-            let vertexPattern = try! NSRegularExpression(
-                pattern: "<vertex\\s+x=\"([ -\\d.]+)\"\\s+y=\"([ -\\d.]+)\"\\s+z=\"([ -\\d.]+)\"",
-                options: []
-            )
-            var fileVerts: [(Double, Double, Double)] = []
-            vertexPattern.enumerateMatches(in: xml, options: [], range: NSRange(location: 0, length: nsXml.length)) { match, _, _ in
-                guard let match = match else { return }
-                func g(_ i: Int) -> Double {
-                    guard let r = Range(match.range(at: i), in: xml), let d = Double(xml[r]) else { return 0 }
-                    return d
-                }
-                fileVerts.append((g(1), g(2), g(3)))
-            }
-
-            // Apply first transform if present (simple single-object 3MF)
-            if let t = transforms.first, fileVerts.count > 0 {
-                let r00 = t[0], r01 = t[1], r02 = t[2]
-                let r10 = t[3], r11 = t[4], r12 = t[5]
-                let r20 = t[6], r21 = t[7], r22 = t[8]
-                let tx = t[9], ty = t[10], tz = t[11]
-                for (x, y, z) in fileVerts {
-                    let wx = r00*x + r01*y + r02*z + tx
-                    let wy = r10*x + r11*y + r12*z + ty
-                    let wz = r20*x + r21*y + r22*z + tz
-                    allVertices.append((wx, wy, wz))
-                }
-            } else {
-                allVertices.append(contentsOf: fileVerts)
-            }
-        }
-        return allVertices
-    }
-
     // MARK: - Regex-based XML scaling
 
     private static func scaleModelXML(_ data: Data, factor: Double, zFactor: Double = 1.0) -> (Data, Bool) {
@@ -371,7 +236,7 @@ final class Converter {
 
         // Vertex pattern: <vertex x="..." y="..." z="..."
         let vertexPattern = try! NSRegularExpression(
-            pattern: "<vertex\\s+x=\"([ -\\d.]+)\"\\s+y=\"([ -\\d.]+)\"\\s+z=\"([ -\\d.]+)\"",
+            pattern: "<vertex\\s+x=\"([-\\d. ]+)\"\\s+y=\"([-\\d. ]+)\"\\s+z=\"([-\\d. ]+)\"",
             options: []
         )
 
@@ -430,109 +295,5 @@ final class Converter {
         }
         result += string[lastEnd..<string.endIndex]
         return result
-    }
-}
-
-// MARK: - Hex Pocket Analyzer
-
-final class HexPocketAnalyzer {
-    /// Find hexagonal pockets in vertex data.
-    /// Groups vertices by Z layer, finds 6-vertex groups at 60° spacing.
-    static func findHexagons(in vertices: [(Double, Double, Double)]) -> [HexFeature] {
-        if vertices.count < 6 { return [] }
-
-        let tolerance: Double = 0.01
-
-        // Group by Z layer
-        var zLayers: [Double: [(Double, Double, Double)]] = [:]
-        for v in vertices {
-            let zKey = (v.2 / tolerance).rounded() * tolerance
-            zLayers[zKey, default: []].append(v)
-        }
-
-        var hexagons: [HexFeature] = []
-
-        for (zKey, layerVerts) in zLayers {
-            if layerVerts.count < 6 { continue }
-            let n = layerVerts.count
-
-            for i in 0..<n {
-                for j in (i+1)..<n {
-                    let v1 = layerVerts[i]
-                    let v2 = layerVerts[j]
-                    let dx = v2.0 - v1.0
-                    let dy = v2.1 - v1.1
-                    let dist = (dx*dx + dy*dy).squareRoot()
-                    if dist < 1.0 { continue }
-
-                    let r = dist / 2.0  // circumradius
-                    if r < 2.0 || r > 30.0 { continue }
-
-                    let cx = (v1.0 + v2.0) / 2.0
-                    let cy = (v1.1 + v2.1) / 2.0
-
-                    // Find all vertices at ~r from center
-                    var group: [(Double, Double, Double)] = []
-                    for v in layerVerts {
-                        let vdx = v.0 - cx
-                        let vdy = v.1 - cy
-                        let vr = (vdx*vdx + vdy*vdy).squareRoot()
-                        if abs(vr - r) < tolerance * 5 {
-                            group.append(v)
-                        }
-                    }
-                    if group.count < 6 { continue }
-
-                    // Check for 6 angles at ~60° spacing
-                    var angles: [Double] = []
-                    for v in group {
-                        angles.append(atan2(v.1 - cy, v.0 - cx))
-                    }
-                    angles.sort()
-
-                    var bestCount = 0
-                    for startIdx in 0..<angles.count {
-                        var count = 1
-                        var target = angles[startIdx] + .pi / 3
-                        for _ in 1..<6 {
-                            var bestDiff = Double.infinity
-                            for a in angles {
-                                let diff = abs(((a - target + .pi).truncatingRemainder(dividingBy: 2 * .pi)) - .pi)
-                                if diff < bestDiff { bestDiff = diff }
-                            }
-                            if bestDiff < 3.0 * .pi / 180 {  // 3° tolerance
-                                count += 1
-                                target += .pi / 3
-                            } else {
-                                break
-                            }
-                        }
-                        bestCount = max(bestCount, count)
-                    }
-
-                    if bestCount >= 6 {
-                        let af = r * 3.0.squareRoot()
-                        // Deduplicate
-                        let isDup = hexagons.contains { h in
-                            abs(h.afMM - af) < 0.1 && abs(h.zHeight - zKey) < 0.5
-                        }
-                        if !isDup {
-                            hexagons.append(HexFeature(
-                                afMM: af, zHeight: zKey, circumradius: r,
-                                vertexCount: 6, centerX: cx, centerY: cy))
-                        }
-                    }
-                }
-            }
-        }
-
-        hexagons.sort { $0.afMM < $1.afMM }
-        return hexagons
-    }
-
-    /// Find the most likely bolt pocket (smallest AF in bolt-size range).
-    static func findBoltPocket(in hexagons: [HexFeature]) -> HexFeature? {
-        let candidates = hexagons.filter { $0.isLikelyPocket }
-        return candidates.first ?? hexagons.first
     }
 }

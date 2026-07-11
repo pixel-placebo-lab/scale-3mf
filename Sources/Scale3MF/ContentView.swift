@@ -33,14 +33,13 @@ enum TargetType: String, CaseIterable, Identifiable {
 }
 
 enum ScaleMode: String, CaseIterable, Identifiable {
-    case simple, advanced, profile, measure
+    case simple, advanced, profile
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .simple: return "Simple"
         case .advanced: return "Advanced"
         case .profile: return "8020"
-        case .measure: return "Measure"
         }
     }
 }
@@ -62,15 +61,6 @@ struct ContentView: View {
 
     // 8020 profile mode state
     @State private var selectedProfileKey: String = "2020-to-1010"
-
-    // Measure mode state
-    @State private var measureTargetAF: String = ""
-    @State private var measureClearance: String = "0.15"
-    @State private var measureSAEPreset: String = ""  // optional SAE dropdown
-    @State private var detectedHexagons: [HexFeature] = []
-    @State private var detectedPocket: HexFeature?
-    @State private var isAnalyzing = false
-    @State private var analyzeError: String?
 
     @State private var results: [DropResult] = []
     @State private var isTargeted = false
@@ -148,32 +138,6 @@ struct ContentView: View {
         return after - p.targetSlot
     }
 
-    // MARK: - Measure mode computed values
-
-    var measureTargetValue: Double? {
-        let v = measureTargetAF.trimmingCharacters(in: .whitespaces)
-        return Double(v)
-    }
-
-    var measureClearanceValue: Double {
-        let v = measureClearance.trimmingCharacters(in: .whitespaces)
-        return Double(v) ?? 0.15
-    }
-
-    var measureTotalTarget: Double? {
-        guard let t = measureTargetValue else { return nil }
-        return t + measureClearanceValue
-    }
-
-    var measureScaleFactor: Double? {
-        guard let pocket = detectedPocket, let total = measureTotalTarget else { return nil }
-        return total / pocket.afMM
-    }
-
-    var measureCanScale: Bool {
-        measureScaleFactor != nil && detectedPocket != nil
-    }
-
     // MARK: - Body
 
     var body: some View {
@@ -193,8 +157,8 @@ struct ContentView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    // Fastener type (hidden in profile and measure modes)
-                    if scaleMode != .profile && scaleMode != .measure {
+                    // Fastener type (hidden in profile mode)
+                    if scaleMode != .profile {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Fastener Type")
                                 .font(.caption)
@@ -240,8 +204,6 @@ struct ContentView: View {
                         advancedControls
                     case .profile:
                         profileControls
-                    case .measure:
-                        measureControls
                     }
 
                     // Z Scale control
@@ -270,10 +232,7 @@ struct ContentView: View {
                 Text("Scale")
                     .frame(minWidth: 120)
             }
-            .disabled(scaleMode == .advanced ? !advancedScaleValid :
-                      (scaleMode == .profile ? selectedProfile == nil :
-                       scaleMode == .measure ? !measureCanScale :
-                       selectedEntry == nil))
+            .disabled(scaleMode == .advanced ? !advancedScaleValid : (scaleMode == .profile ? selectedProfile == nil : selectedEntry == nil))
 
             Text(statusText)
                 .font(.caption)
@@ -540,145 +499,6 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Measure controls
-
-    private var measureControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Pocket detection status
-            if isAnalyzing {
-                HStack {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                    Text("Analyzing hex pockets...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            } else if let pocket = detectedPocket {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Image(systemName: "ruler")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                        Text("Pocket detected: \(String(format: "%.3f", pocket.afMM))mm AF")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.green)
-                    }
-                    Text("at Z=\(String(format: "%.2f", pocket.zHeight))mm, radius \(String(format: "%.3f", pocket.circumradius))mm")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.08)))
-            } else if let err = analyzeError {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                        Text(err)
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                    Text("Drop a fastener knob model with a hex pocket to use Measure mode.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.08)))
-            } else {
-                Text("Drop a .3MF file to auto-detect hex pocket")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 4)
-            }
-
-            // Show all detected hex features if multiple
-            if detectedHexagons.count > 1 {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("All hex features:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    ForEach(detectedHexagons) { h in
-                        let isPocket = detectedPocket?.id == h.id
-                        Text("  AF=\(String(format: "%.3f", h.afMM))mm at Z=\(String(format: "%.2f", h.zHeight))mm\(isPocket ? " ◀ pocket" : "")")
-                            .font(.caption2)
-                            .foregroundColor(isPocket ? .green : .secondary)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            // Target AF input
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Target AF (mm) — caliper bolt head width")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                TextField("e.g. 14.29", text: $measureTargetAF)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-            }
-
-            // Clearance input
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Clearance (mm)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                TextField("0.15", text: $measureClearance)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-            }
-
-            // Optional SAE preset dropdown
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Or pick SAE size (auto-fills target + clearance)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Picker("SAE Preset", selection: $measureSAEPreset) {
-                    Text("— Custom —").tag("")
-                    ForEach(saeSizes, id: \.self) { size in
-                        Text(size).tag(size)
-                    }
-                }
-                .pickerStyle(MenuPickerStyle())
-                .onChange(of: measureSAEPreset) { newValue in
-                    if !newValue.isEmpty,
-                       let entry = ConversionTable.entry(forSae: newValue, type: .hexHead) {
-                        measureTargetAF = String(format: "%.2f", entry.saeDim)
-                        measureClearance = "0.15"
-                    }
-                }
-            }
-
-            // Scale summary
-            if let pocket = detectedPocket, let total = measureTotalTarget, let scale = measureScaleFactor {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Pocket: \(String(format: "%.3f", pocket.afMM))mm")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("Target: \(String(format: "%.3f", total))mm (\(String(format: "%.2f", measureTargetValue ?? 0)) + \(String(format: "%.2f", measureClearanceValue)) clearance)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("Scale X/Y")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(String(format: "%.4f", scale))
-                            .font(.body)
-                            .fontWeight(.semibold)
-                            .foregroundColor(scale < 1.0 ? .orange : .green)
-                    }
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
-            }
-        }
-    }
-
     // MARK: - Helpers
 
     private func prioritizedTypes() -> [FastenerType] {
@@ -736,11 +556,6 @@ struct ContentView: View {
     }
 
     private func scaleFile(_ url: URL) {
-        // In Measure mode, first analyze then scale
-        if scaleMode == .measure {
-            analyzeFile(url)
-        }
-
         let zf = zScaleEnabled ? zScaleFactor : 1.0
         do {
             let result: ConversionResult
@@ -769,17 +584,6 @@ struct ContentView: View {
                 }
             case .profile:
                 result = try Converter.scaleProfile(input: url, presetKey: selectedProfileKey, zFactor: zf)
-            case .measure:
-                guard let targetAF = measureTargetValue else {
-                    statusText = "✗ Enter a target AF value"
-                    return
-                }
-                let mResult = try Converter.scaleMeasure(input: url, targetAF: targetAF,
-                                                         clearance: measureClearanceValue, zFactor: zf)
-                let msg = "Pocket \(String(format: "%.3f", mResult.detectedAF))mm → \(String(format: "%.3f", mResult.targetAF + mResult.clearance))mm × \(String(format: "%.4f", mResult.scaleFactor)) → \(mResult.output.lastPathComponent)"
-                results.append(DropResult(inputName: url.lastPathComponent, outputName: mResult.output.lastPathComponent, success: true, message: msg))
-                statusText = "✓ Pocket \(String(format: "%.3f", mResult.detectedAF))mm → \(String(format: "%.3f", mResult.targetAF + mResult.clearance))mm × \(String(format: "%.3f", mResult.scaleFactor)) → \(mResult.output.lastPathComponent)"
-                return
             }
 
             var msg = "\(result.metric) → \(result.sae) × \(String(format: "%.4f", result.scaleFactor))"
@@ -792,35 +596,6 @@ struct ContentView: View {
         } catch {
             results.append(DropResult(inputName: url.lastPathComponent, outputName: "", success: false, message: error.localizedDescription))
             statusText = "✗ \(error.localizedDescription)"
-        }
-    }
-
-    // MARK: - Measure mode analysis
-
-    private func analyzeFile(_ url: URL) {
-        isAnalyzing = true
-        analyzeError = nil
-        detectedHexagons = []
-        detectedPocket = nil
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                let hexagons = try Converter.analyzeHexPockets(in: url)
-                let pocket = HexPocketAnalyzer.findBoltPocket(in: hexagons)
-                DispatchQueue.main.async {
-                    self.isAnalyzing = false
-                    self.detectedHexagons = hexagons
-                    self.detectedPocket = pocket
-                    if hexagons.isEmpty {
-                        self.analyzeError = "No hex pockets detected"
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.isAnalyzing = false
-                    self.analyzeError = error.localizedDescription
-                }
-            }
         }
     }
 }
