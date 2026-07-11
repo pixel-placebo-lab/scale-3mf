@@ -8,9 +8,70 @@ struct DropResult: Identifiable {
     let message: String
 }
 
+enum SourceType: String, CaseIterable, Identifiable {
+    case metric
+    case sae
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .metric: return "Metric"
+        case .sae: return "SAE"
+        }
+    }
+}
+
+enum TargetType: String, CaseIterable, Identifiable {
+    case sae
+    case metric
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .sae: return "SAE"
+        case .metric: return "Metric"
+        }
+    }
+}
+
+enum ScaleMode: String, CaseIterable, Identifiable {
+    case simple, advanced, profile, measure
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .simple: return "Simple"
+        case .advanced: return "Advanced"
+        case .profile: return "8020"
+        case .measure: return "Measure"
+        }
+    }
+}
+
 struct ContentView: View {
     @State private var selectedFastener: FastenerType = .hexHead
     @State private var selectedSAE: String = "1/4"
+
+    // Mode
+    @State private var scaleMode: ScaleMode = .simple
+
+    // Advanced mode state
+    @State private var selectedSourceType: SourceType = .metric
+    @State private var selectedSourceMetric: String = "M8"
+    @State private var selectedSourceSAE: String = "1/4"
+    @State private var selectedTargetType: TargetType = .sae
+    @State private var selectedTargetSAE: String = "3/8"
+    @State private var selectedTargetMetric: String = "M10"
+
+    // 8020 profile mode state
+    @State private var selectedProfileKey: String = "2020-to-1010"
+
+    // Measure mode state
+    @State private var measureTargetAF: String = ""
+    @State private var measureClearance: String = "0.15"
+    @State private var measureSAEPreset: String = ""  // optional SAE dropdown
+    @State private var detectedHexagons: [HexFeature] = []
+    @State private var detectedPocket: HexFeature?
+    @State private var isAnalyzing = false
+    @State private var analyzeError: String?
+
     @State private var results: [DropResult] = []
     @State private var isTargeted = false
     @State private var statusText = "Drop a .3MF file to scale"
@@ -21,123 +82,205 @@ struct ContentView: View {
         ConversionTable.saeSizes(for: selectedFastener)
     }
 
+    private var metricSizes: [String] {
+        ConversionTable.metricSizes(for: selectedFastener)
+    }
+
     var selectedEntry: SAEEntry? {
         ConversionTable.entry(forSae: selectedSAE, type: selectedFastener)
     }
 
+    // MARK: - Advanced dimension lookups
+
+    var advancedSourceDim: Double? {
+        switch selectedSourceType {
+        case .metric:
+            return ConversionTable.metricDimension(for: selectedSourceMetric, type: selectedFastener)
+        case .sae:
+            return ConversionTable.saeDimension(for: selectedSourceSAE, type: selectedFastener)
+        }
+    }
+
+    var advancedTargetDim: Double? {
+        switch selectedTargetType {
+        case .sae:
+            return ConversionTable.saeDimension(for: selectedTargetSAE, type: selectedFastener)
+        case .metric:
+            return ConversionTable.metricDimension(for: selectedTargetMetric, type: selectedFastener)
+        }
+    }
+
+    var advancedScale: Double? {
+        guard let s = advancedSourceDim, s > 0,
+              let t = advancedTargetDim, t > 0 else { return nil }
+        return t / s
+    }
+
+    var advancedScaleValid: Bool { advancedScale != nil }
+
+    var advancedSourceLabel: String {
+        switch selectedSourceType {
+        case .metric: return selectedSourceMetric
+        case .sae: return selectedSourceSAE
+        }
+    }
+
+    var advancedTargetLabel: String {
+        switch selectedTargetType {
+        case .sae: return selectedTargetSAE
+        case .metric: return selectedTargetMetric
+        }
+    }
+
+    // MARK: - 8020 profile lookups
+
+    var selectedProfile: ConversionTable.ExtrusionProfile? {
+        ConversionTable.extrusionProfile(forKey: selectedProfileKey)
+    }
+
+    var profileSlotAfterScale: Double? {
+        guard let p = selectedProfile else { return nil }
+        return p.sourceSlot * p.scale
+    }
+
+    var profileSlotMismatch: Double? {
+        guard let p = selectedProfile, let after = profileSlotAfterScale else { return nil }
+        return after - p.targetSlot
+    }
+
+    // MARK: - Measure mode computed values
+
+    var measureTargetValue: Double? {
+        let v = measureTargetAF.trimmingCharacters(in: .whitespaces)
+        return Double(v)
+    }
+
+    var measureClearanceValue: Double {
+        let v = measureClearance.trimmingCharacters(in: .whitespaces)
+        return Double(v) ?? 0.15
+    }
+
+    var measureTotalTarget: Double? {
+        guard let t = measureTargetValue else { return nil }
+        return t + measureClearanceValue
+    }
+
+    var measureScaleFactor: Double? {
+        guard let pocket = detectedPocket, let total = measureTotalTarget else { return nil }
+        return total / pocket.afMM
+    }
+
+    var measureCanScale: Bool {
+        measureScaleFactor != nil && detectedPocket != nil
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        VStack(spacing: 16) {
-            // Header
+        VStack(spacing: 14) {
             VStack(spacing: 2) {
                 Text("Scale3MF 🦞")
                     .font(.title2)
                     .fontWeight(.bold)
-                Text("Metric → SAE 3MF Scaling")
+                Text("Universal 3MF Scaling")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             .padding(.top, 12)
 
-            // Drop zone
             dropZone
-                .frame(maxWidth: .infinity, minHeight: 140)
+                .frame(maxWidth: .infinity, minHeight: 120)
 
-            // Controls
-            VStack(alignment: .leading, spacing: 12) {
-                // Fastener type - dropdown, not segmented
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Fastener Type")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Picker("Fastener Type", selection: $selectedFastener) {
-                        ForEach(prioritizedTypes()) { type in
-                            Text(type.displayName).tag(type)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    // Fastener type (hidden in profile and measure modes)
+                    if scaleMode != .profile && scaleMode != .measure {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Fastener Type")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Picker("Fastener Type", selection: $selectedFastener) {
+                                ForEach(prioritizedTypes()) { type in
+                                    Text(type.displayName).tag(type)
+                                }
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            .onChange(of: selectedFastener) { _ in
+                                if !saeSizes.contains(selectedSAE), let first = saeSizes.first {
+                                    selectedSAE = first
+                                }
+                                if !saeSizes.contains(selectedSourceSAE), let first = saeSizes.first {
+                                    selectedSourceSAE = first
+                                }
+                                if !saeSizes.contains(selectedTargetSAE), let first = saeSizes.first {
+                                    selectedTargetSAE = first
+                                }
+                                if !metricSizes.contains(selectedSourceMetric), let first = metricSizes.first {
+                                    selectedSourceMetric = first
+                                }
+                                if !metricSizes.contains(selectedTargetMetric), let first = metricSizes.first {
+                                    selectedTargetMetric = first
+                                }
+                            }
                         }
                     }
-                    .pickerStyle(MenuPickerStyle())
-                    .onChange(of: selectedFastener) { _ in
-                        if !saeSizes.contains(selectedSAE), let first = saeSizes.first {
-                            selectedSAE = first
+
+                    // Mode picker (segmented)
+                    Picker("Mode", selection: $scaleMode) {
+                        ForEach(ScaleMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+
+                    switch scaleMode {
+                    case .simple:
+                        simpleControls
+                    case .advanced:
+                        advancedControls
+                    case .profile:
+                        profileControls
+                    case .measure:
+                        measureControls
+                    }
+
+                    // Z Scale control
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Z Scale", isOn: $zScaleEnabled)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if zScaleEnabled {
+                            HStack {
+                                Text("Z Factor")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Slider(value: $zScaleFactor, in: 0.1...3.0, step: 0.001)
+                                Text(String(format: "%.3f", zScaleFactor))
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .frame(width: 50, alignment: .trailing)
+                            }
                         }
                     }
                 }
-
-                // SAE size - dropdown, not segmented
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Target SAE Size")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Picker("SAE Size", selection: $selectedSAE) {
-                        ForEach(saeSizes, id: \.self) { size in
-                            Text(size).tag(size)
-                        }
-                    }
-                    .pickerStyle(MenuPickerStyle())
-                }
-
-                // Scale info
-                if let entry = selectedEntry {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("From: \(entry.metric) (\(String(format: "%.2f", entry.metricDim)) mm)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text("To: \(entry.sae) (\(String(format: "%.2f", entry.saeDim)) mm)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("Scale X/Y")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text(String(format: "%.4f", entry.scaleFactor))
-                                .font(.body)
-                                .fontWeight(.semibold)
-                                .foregroundColor(entry.scaleFactor < 1.0 ? .orange : .green)
-                        }
-                    }
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
-                }
-
-                // Z Scale control
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Z Scale", isOn: $zScaleEnabled)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    if zScaleEnabled {
-                        HStack {
-                            Text("Z Factor")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Slider(value: $zScaleFactor, in: 0.1...3.0, step: 0.001)
-                            Text(String(format: "%.3f", zScaleFactor))
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .frame(width: 50, alignment: .trailing)
-                        }
-                    }
-                }
+                .padding(.horizontal)
             }
-            .padding(.horizontal)
 
-            // Scale button
             Button(action: selectFileAndScale) {
                 Text("Scale")
                     .frame(minWidth: 120)
             }
-            .disabled(selectedEntry == nil)
+            .disabled(scaleMode == .advanced ? !advancedScaleValid :
+                      (scaleMode == .profile ? selectedProfile == nil :
+                       scaleMode == .measure ? !measureCanScale :
+                       selectedEntry == nil))
 
-            // Status
             Text(statusText)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
 
-            // Results list
             if !results.isEmpty {
                 List {
                     ForEach(results.reversed()) { result in
@@ -155,22 +298,390 @@ struct ContentView: View {
                         }
                     }
                 }
-                .frame(minHeight: 60, maxHeight: 120)
+                .frame(minHeight: 60, maxHeight: 100)
             }
 
             Spacer()
 
-            // Version
             Text("Scale3MF \(ConversionTable.appVersion)")
                 .font(.caption2)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 8)
         }
-        .frame(width: 380, height: 620)
+        .frame(width: 400, height: 740)
     }
 
+    // MARK: - Simple controls
+
+    private var simpleControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Target SAE Size")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Picker("SAE Size", selection: $selectedSAE) {
+                    ForEach(saeSizes, id: \.self) { size in
+                        Text(size).tag(size)
+                    }
+                }
+                .pickerStyle(MenuPickerStyle())
+            }
+
+            if let entry = selectedEntry {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("From: \(entry.metric) (\(String(format: "%.2f", entry.metricDim)) mm)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("To: \(entry.sae) (\(String(format: "%.2f", entry.saeDim)) mm)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("Scale X/Y")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(String(format: "%.4f", entry.scaleFactor))
+                            .font(.body)
+                            .fontWeight(.semibold)
+                            .foregroundColor(entry.scaleFactor < 1.0 ? .orange : .green)
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+            }
+        }
+    }
+
+    // MARK: - Advanced controls
+
+    private var advancedControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Source type toggle
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Source Type")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Picker("Source Type", selection: $selectedSourceType) {
+                    ForEach(SourceType.allCases) { type in
+                        Text(type.displayName).tag(type)
+                    }
+                }
+                .pickerStyle(SegmentedPickerStyle())
+            }
+
+            // Source size
+            VStack(alignment: .leading, spacing: 4) {
+                Text(selectedSourceType == .metric ? "Source Metric Size" : "Source SAE Size")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if selectedSourceType == .metric {
+                    Picker("Source Metric", selection: $selectedSourceMetric) {
+                        ForEach(metricSizes, id: \.self) { size in
+                            Text(size).tag(size)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                } else {
+                    Picker("Source SAE", selection: $selectedSourceSAE) {
+                        ForEach(saeSizes, id: \.self) { size in
+                            Text(size).tag(size)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                }
+            }
+
+            // Target type toggle
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Target Type")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Picker("Target Type", selection: $selectedTargetType) {
+                    ForEach(TargetType.allCases) { type in
+                        Text(type.displayName).tag(type)
+                    }
+                }
+                .pickerStyle(SegmentedPickerStyle())
+            }
+
+            // Target size
+            VStack(alignment: .leading, spacing: 4) {
+                Text(selectedTargetType == .sae ? "Target SAE Size" : "Target Metric Size")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                if selectedTargetType == .sae {
+                    Picker("Target SAE Size", selection: $selectedTargetSAE) {
+                        ForEach(saeSizes, id: \.self) { size in
+                            Text(size).tag(size)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                } else {
+                    Picker("Target Metric Size", selection: $selectedTargetMetric) {
+                        ForEach(metricSizes, id: \.self) { size in
+                            Text(size).tag(size)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                }
+            }
+
+            // Scale summary
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Source: \(advancedSourceLabel) (\(advancedSourceDim.map { String(format: "%.2f", $0) } ?? "—") mm)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("Target: \(advancedTargetLabel) (\(advancedTargetDim.map { String(format: "%.2f", $0) } ?? "—") mm)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Scale X/Y")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if let scale = advancedScale {
+                        Text(String(format: "%.4f", scale))
+                            .font(.body)
+                            .fontWeight(.semibold)
+                            .foregroundColor(scale < 1.0 ? .orange : .green)
+                    } else {
+                        Text("—")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+        }
+    }
+
+    // MARK: - 8020 Profile controls
+
+    private var profileControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Profile Preset")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Picker("Profile", selection: $selectedProfileKey) {
+                    ForEach(ConversionTable.extrusionProfiles, id: \.key) { item in
+                        Text(item.profile.name).tag(item.key)
+                    }
+                }
+                .pickerStyle(MenuPickerStyle())
+            }
+
+            if let p = selectedProfile {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Source: \(p.sourceLabel)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("Target: \(p.targetLabel)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Body Scale")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(String(format: "%.4f", p.scale))
+                            .font(.body)
+                            .fontWeight(.semibold)
+                            .foregroundColor(p.scale < 1.0 ? .orange : .green)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("Δ")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(String(format: "%+.2f%%", (p.scale - 1) * 100))
+                            .font(.body)
+                            .fontWeight(.semibold)
+                            .foregroundColor(p.scale < 1.0 ? .orange : .green)
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+
+                // T-slot analysis
+                if let after = profileSlotAfterScale, let mismatch = profileSlotMismatch {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("T-slot after scale: \(String(format: "%.2f", after))mm (target: \(String(format: "%.2f", p.targetSlot))mm)")
+                            .font(.caption)
+                            .foregroundColor(abs(mismatch) > 0.1 ? .orange : .green)
+                        if abs(mismatch) > 0.1 {
+                            Text("⚠ T-slot \(mismatch > 0 ? "oversized" : "undersized") by \(String(format: "%.2f", abs(mismatch)))mm")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                            Text("Uniform scaling can't fix slots. Design in OpenSCAD with separate slot params for perfect fit.")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("✓ T-slot within tolerance")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.05)))
+                }
+            }
+        }
+    }
+
+    // MARK: - Measure controls
+
+    private var measureControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Pocket detection status
+            if isAnalyzing {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Analyzing hex pockets...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } else if let pocket = detectedPocket {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "ruler")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                        Text("Pocket detected: \(String(format: "%.3f", pocket.afMM))mm AF")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.green)
+                    }
+                    Text("at Z=\(String(format: "%.2f", pocket.zHeight))mm, radius \(String(format: "%.3f", pocket.circumradius))mm")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.08)))
+            } else if let err = analyzeError {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                        Text(err)
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                    Text("Drop a fastener knob model with a hex pocket to use Measure mode.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.08)))
+            } else {
+                Text("Drop a .3MF file to auto-detect hex pocket")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 4)
+            }
+
+            // Show all detected hex features if multiple
+            if detectedHexagons.count > 1 {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("All hex features:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    ForEach(detectedHexagons) { h in
+                        let isPocket = detectedPocket?.id == h.id
+                        Text("  AF=\(String(format: "%.3f", h.afMM))mm at Z=\(String(format: "%.2f", h.zHeight))mm\(isPocket ? " ◀ pocket" : "")")
+                            .font(.caption2)
+                            .foregroundColor(isPocket ? .green : .secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            // Target AF input
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Target AF (mm) — caliper bolt head width")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextField("e.g. 14.29", text: $measureTargetAF)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+            }
+
+            // Clearance input
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Clearance (mm)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextField("0.15", text: $measureClearance)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+            }
+
+            // Optional SAE preset dropdown
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Or pick SAE size (auto-fills target + clearance)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Picker("SAE Preset", selection: $measureSAEPreset) {
+                    Text("— Custom —").tag("")
+                    ForEach(saeSizes, id: \.self) { size in
+                        Text(size).tag(size)
+                    }
+                }
+                .pickerStyle(MenuPickerStyle())
+                .onChange(of: measureSAEPreset) { newValue in
+                    if !newValue.isEmpty,
+                       let entry = ConversionTable.entry(forSae: newValue, type: .hexHead) {
+                        measureTargetAF = String(format: "%.2f", entry.saeDim)
+                        measureClearance = "0.15"
+                    }
+                }
+            }
+
+            // Scale summary
+            if let pocket = detectedPocket, let total = measureTotalTarget, let scale = measureScaleFactor {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Pocket: \(String(format: "%.3f", pocket.afMM))mm")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Target: \(String(format: "%.3f", total))mm (\(String(format: "%.2f", measureTargetValue ?? 0)) + \(String(format: "%.2f", measureClearanceValue)) clearance)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("Scale X/Y")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(String(format: "%.4f", scale))
+                            .font(.body)
+                            .fontWeight(.semibold)
+                            .foregroundColor(scale < 1.0 ? .orange : .green)
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
     private func prioritizedTypes() -> [FastenerType] {
-        // Hex Head first, then Hex Nut, Nylock, then the rest
         let priority: [FastenerType] = [.hexHead, .hexNut, .nylockNut, .socketHeadCap, .buttonHeadCap]
         let available = Set(ConversionTable.types().map { $0 })
         return priority.filter { available.contains($0) }
@@ -225,20 +736,91 @@ struct ContentView: View {
     }
 
     private func scaleFile(_ url: URL) {
-        guard let entry = selectedEntry else { return }
+        // In Measure mode, first analyze then scale
+        if scaleMode == .measure {
+            analyzeFile(url)
+        }
+
         let zf = zScaleEnabled ? zScaleFactor : 1.0
         do {
-            let result = try Converter.scale(input: url, sae: entry.sae, type: selectedFastener, zFactor: zf)
-            var msg = "\(entry.sae)\" (\(entry.metric)) scaled \(String(format: "%.4f", result.scaleFactor))"
+            let result: ConversionResult
+            switch scaleMode {
+            case .simple:
+                guard let entry = selectedEntry else { return }
+                result = try Converter.scale(input: url, sae: entry.sae, type: selectedFastener, zFactor: zf)
+            case .advanced:
+                switch (selectedSourceType, selectedTargetType) {
+                case (.metric, .sae):
+                    result = try Converter.scaleAdvancedMetricToSAE(
+                        input: url, sourceMetric: selectedSourceMetric,
+                        sae: selectedTargetSAE, type: selectedFastener, zFactor: zf)
+                case (.metric, .metric):
+                    result = try Converter.scaleAdvancedMetricToMetric(
+                        input: url, sourceMetric: selectedSourceMetric,
+                        targetMetric: selectedTargetMetric, type: selectedFastener, zFactor: zf)
+                case (.sae, .metric):
+                    result = try Converter.scaleAdvancedSAEToMetric(
+                        input: url, saeSource: selectedSourceSAE,
+                        targetMetric: selectedTargetMetric, type: selectedFastener, zFactor: zf)
+                case (.sae, .sae):
+                    result = try Converter.scaleAdvancedSAEToSAE(
+                        input: url, saeSource: selectedSourceSAE,
+                        saeTarget: selectedTargetSAE, type: selectedFastener, zFactor: zf)
+                }
+            case .profile:
+                result = try Converter.scaleProfile(input: url, presetKey: selectedProfileKey, zFactor: zf)
+            case .measure:
+                guard let targetAF = measureTargetValue else {
+                    statusText = "✗ Enter a target AF value"
+                    return
+                }
+                let mResult = try Converter.scaleMeasure(input: url, targetAF: targetAF,
+                                                         clearance: measureClearanceValue, zFactor: zf)
+                let msg = "Pocket \(String(format: "%.3f", mResult.detectedAF))mm → \(String(format: "%.3f", mResult.targetAF + mResult.clearance))mm × \(String(format: "%.4f", mResult.scaleFactor)) → \(mResult.output.lastPathComponent)"
+                results.append(DropResult(inputName: url.lastPathComponent, outputName: mResult.output.lastPathComponent, success: true, message: msg))
+                statusText = "✓ Pocket \(String(format: "%.3f", mResult.detectedAF))mm → \(String(format: "%.3f", mResult.targetAF + mResult.clearance))mm × \(String(format: "%.3f", mResult.scaleFactor)) → \(mResult.output.lastPathComponent)"
+                return
+            }
+
+            var msg = "\(result.metric) → \(result.sae) × \(String(format: "%.4f", result.scaleFactor))"
             if zf != 1.0 {
                 msg += " Z: \(String(format: "%.4f", zf))"
             }
             msg += " → \(result.output.lastPathComponent)"
             results.append(DropResult(inputName: url.lastPathComponent, outputName: result.output.lastPathComponent, success: true, message: msg))
-            statusText = "✓ \(entry.sae)\" (\(entry.metric)) × \(String(format: "%.3f", result.scaleFactor)) → \(result.output.lastPathComponent)"
+            statusText = "✓ \(result.metric) → \(result.sae) × \(String(format: "%.3f", result.scaleFactor)) → \(result.output.lastPathComponent)"
         } catch {
             results.append(DropResult(inputName: url.lastPathComponent, outputName: "", success: false, message: error.localizedDescription))
             statusText = "✗ \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Measure mode analysis
+
+    private func analyzeFile(_ url: URL) {
+        isAnalyzing = true
+        analyzeError = nil
+        detectedHexagons = []
+        detectedPocket = nil
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let hexagons = try Converter.analyzeHexPockets(in: url)
+                let pocket = HexPocketAnalyzer.findBoltPocket(in: hexagons)
+                DispatchQueue.main.async {
+                    self.isAnalyzing = false
+                    self.detectedHexagons = hexagons
+                    self.detectedPocket = pocket
+                    if hexagons.isEmpty {
+                        self.analyzeError = "No hex pockets detected"
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isAnalyzing = false
+                    self.analyzeError = error.localizedDescription
+                }
+            }
         }
     }
 }
