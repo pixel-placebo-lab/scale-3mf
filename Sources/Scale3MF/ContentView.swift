@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct DropResult: Identifiable {
     let id = UUID()
@@ -169,7 +170,7 @@ struct ContentView: View {
                                 }
                             }
                             .pickerStyle(MenuPickerStyle())
-                            .onChange(of: selectedFastener) { _ in
+                            .onChange(of: selectedFastener) { _, _ in
                                 if !saeSizes.contains(selectedSAE), let first = saeSizes.first {
                                     selectedSAE = first
                                 }
@@ -545,7 +546,7 @@ struct ContentView: View {
 
     private func selectFileAndScale() {
         let panel = NSOpenPanel()
-        panel.allowedFileTypes = ["3mf"]
+        panel.allowedContentTypes = [UTType(filenameExtension: "3mf")].compactMap { $0 }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.begin { response in

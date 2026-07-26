@@ -1,9 +1,9 @@
-// swift-tools-version:5.7
+// swift-tools-version: 5.10
 import PackageDescription
 
 let package = Package(
     name: "Scale3MF",
-    platforms: [.macOS(.v12)],
+    platforms: [.macOS(.v14)],
     products: [
         .executable(name: "Scale3MF", targets: ["Scale3MF"])
     ],
