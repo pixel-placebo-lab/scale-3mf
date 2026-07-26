@@ -39,6 +39,77 @@ SAE_TO_METRIC = {
 FASTENER_TYPES = ["hex_head", "hex_nut", "nylock_nut", "socket_head_cap", "button_head_cap"]
 
 
+# 8020 aluminum extrusion profile presets (body scale + T-slot analysis)
+EXTRUSION_PROFILES = {
+    # Metric -> Imperial
+    "2020-to-1010": {
+        "name": "20×20mm → 1.00×1.00\" (1010)",
+        "source_label": "20×20mm, T-slot 8mm",
+        "target_label": "1.00×1.00\", T-slot 0.250\"",
+        "scale": 25.4 / 20,
+        "source_slot_mm": 8.0,
+        "target_slot_mm": 6.35,
+    },
+    "2020-to-1515": {
+        "name": "20×20mm → 1.50×1.50\" (1515)",
+        "source_label": "20×20mm, T-slot 8mm",
+        "target_label": "1.50×1.50\", T-slot 0.370\"",
+        "scale": 38.1 / 20,
+        "source_slot_mm": 8.0,
+        "target_slot_mm": 9.40,
+    },
+    "2040-to-1020": {
+        "name": "20×40mm → 1.00×2.00\" (1020)",
+        "source_label": "20×40mm, T-slot 8mm",
+        "target_label": "1.00×2.00\", T-slot 0.250\"",
+        "scale": 25.4 / 20,
+        "source_slot_mm": 8.0,
+        "target_slot_mm": 6.35,
+    },
+    "2040-to-1540": {
+        "name": "20×40mm → 1.50×3.00\" (1540)",
+        "source_label": "20×40mm, T-slot 8mm",
+        "target_label": "1.50×3.00\", T-slot 0.370\"",
+        "scale": 38.1 / 20,
+        "source_slot_mm": 8.0,
+        "target_slot_mm": 9.40,
+    },
+    # Imperial -> Metric
+    "1010-to-2020": {
+        "name": "1.00×1.00\" → 20×20mm (1010→2020)",
+        "source_label": "1.00×1.00\", T-slot 0.250\"",
+        "target_label": "20×20mm, T-slot 8mm",
+        "scale": 20 / 25.4,
+        "source_slot_mm": 6.35,
+        "target_slot_mm": 8.0,
+    },
+    "1515-to-2020": {
+        "name": "1.50×1.50\" → 20×20mm (1515→2020)",
+        "source_label": "1.50×1.50\", T-slot 0.370\"",
+        "target_label": "20×20mm, T-slot 8mm",
+        "scale": 20 / 38.1,
+        "source_slot_mm": 9.40,
+        "target_slot_mm": 8.0,
+    },
+    "1020-to-2040": {
+        "name": "1.00×2.00\" → 20×40mm (1020→2040)",
+        "source_label": "1.00×2.00\", T-slot 0.250\"",
+        "target_label": "20×40mm, T-slot 8mm",
+        "scale": 20 / 25.4,
+        "source_slot_mm": 6.35,
+        "target_slot_mm": 8.0,
+    },
+    "1540-to-2040": {
+        "name": "1.50×3.00\" → 20×40mm (1540→2040)",
+        "source_label": "1.50×3.00\", T-slot 0.370\"",
+        "target_label": "20×40mm, T-slot 8mm",
+        "scale": 20 / 38.1,
+        "source_slot_mm": 9.40,
+        "target_slot_mm": 8.0,
+    },
+}
+
+
 def load_dimensions():
     """Load fastener dimensions from JSON file."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -202,6 +273,18 @@ def scale_3mf(input_path, scale_xy=1.0, scale_z=1.0, output_path=None):
     return output_path
 
 
+def print_profile_table():
+    """Print the 8020 extrusion profile scaling presets with slot analysis."""
+    print("\n8020 Aluminum Extrusion — Profile Scaling Presets")
+    print("=" * 90)
+    print(f"{'Preset':<20} {'Source':<28} {'Target':<28} {'Scale':>8} {'Slot After':>12}")
+    print("-" * 90)
+    for key, p in EXTRUSION_PROFILES.items():
+        actual_slot = p["source_slot_mm"] * p["scale"]
+        print(f"{key:<20} {p['source_label']:<28} {p['target_label']:<28} {p['scale']:>8.4f} {actual_slot:>11.2f}mm")
+    print()
+
+
 def print_conversion_table(dim_data=None, fastener_type="hex_head"):
     """Print the SAE→Metric conversion table for a fastener type."""
     type_names = {
@@ -270,6 +353,9 @@ Examples:
   %(prog)s model.3mf --sae 5/16 --fastener-type nylock_nut
   %(prog)s model.3mf --factor 0.977
   %(prog)s model.3mf --sae 5/16 -o my_handle.3mf
+  %(prog)s --profile-table
+  %(prog)s model.3mf --profile-scale 2020-to-1010
+  %(prog)s model.3mf --profile-scale 2020-to-1010 --slot-fix
 """)
     parser.add_argument('input', nargs='?', help='Input 3MF file')
     parser.add_argument('--sae', help='SAE bolt size (e.g. 5/16, 3/8, 1/2)')
@@ -280,12 +366,50 @@ Examples:
     parser.add_argument('--output', '-o', help='Output 3MF file path')
     parser.add_argument('--table', action='store_true', help='Print conversion table and exit')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be done without writing')
+    parser.add_argument('--profile-table', action='store_true', help='Print 8020 extrusion profile table and exit')
+    parser.add_argument('--profile-scale', help='Scale for 8020 profile conversion (preset key)')
+    parser.add_argument('--slot-fix', action='store_true', help='Warn about T-slot mismatch after profile scaling')
 
     args = parser.parse_args()
 
     if args.table:
         print_conversion_table(dim_data, args.fastener_type)
         return
+
+    if args.profile_table:
+        print_profile_table()
+        return
+
+    if args.profile_scale:
+        if args.profile_scale not in EXTRUSION_PROFILES:
+            sys.exit(f"Error: Unknown profile preset '{args.profile_scale}'. Use --profile-table to see presets.")
+        if not args.input:
+            sys.exit("Error: --profile-scale requires an input 3MF file")
+        if not os.path.exists(args.input):
+            sys.exit(f"Error: File not found: {args.input}")
+        if args.sae or args.metric or args.factor is not None:
+            sys.exit("Error: --profile-scale cannot be combined with --sae, --metric, or --factor")
+        profile = EXTRUSION_PROFILES[args.profile_scale]
+        scale_xy = profile["scale"]
+        print(f"\nProfile scaling: {profile['name']}")
+        print(f"  Source: {profile['source_label']}")
+        print(f"  Target: {profile['target_label']}")
+        print(f"  Body scale: {scale_xy:.4f}")
+        actual_slot = profile["source_slot_mm"] * scale_xy
+        diff = actual_slot - profile["target_slot_mm"]
+        print(f"  T-slot after scale: {actual_slot:.2f}mm (target: {profile['target_slot_mm']:.2f}mm, diff: {diff:+.2f}mm)")
+        if abs(diff) > 0.1:
+            print(f"  ⚠️  T-slot {'oversized' if diff > 0 else 'undersized'} — uniform scaling cannot fix slots")
+            if args.slot_fix:
+                print("  💡 Slot-fix tip: design in OpenSCAD with separate slot parameters for a perfect fit.")
+        print(f"\nScaling: X/Y = {scale_xy:.4f}, Z = {args.z:.4f}")
+        print(f"Input: {args.input}")
+        if args.dry_run:
+            print("(dry run — no output written)")
+            return
+        scale_3mf(args.input, scale_xy=scale_xy, scale_z=args.z, output_path=args.output)
+        return
+
 
     if not args.input:
         parser.print_help()
@@ -303,7 +427,7 @@ Examples:
         if scale_xy is None:
             sys.exit("Error: Could not determine scale factor")
     else:
-        sys.exit("Error: Specify --sae, --metric, or --factor to set the scale")
+        sys.exit("Error: Specify --sae, --metric, --factor, or --profile-scale to set the scale")
 
     print(f"\nScaling: X/Y = {scale_xy:.4f}, Z = {args.z:.4f}")
     print(f"Input: {args.input}")
