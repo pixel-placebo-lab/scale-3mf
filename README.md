@@ -1,22 +1,25 @@
-# scale-3mf
+# Scale3MF
 
-> Scale 3MF files for metric→SAE fastener conversion
+> Scale metric 3MF models to SAE fastener sizes — with both a Python CLI and a native macOS droplet app.
 
-Two tools, one job:
-- **Python CLI** (`scale_3mf.py`) — 5 fastener types, Z scaling, dry-run, conversion tables
-- **Swift droplet app** (macOS) — drag & drop GUI, all 5 fastener types, Z scale slider, CLI mode
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
+[![macOS 14+](https://img.shields.io/badge/macOS-14+-black?logo=apple)](https://developer.apple.com/macos/)
 
-## What It Does
+MakerWorld’s parametric models (like the [Parametric Nut Caps & Knobs System](https://makerworld.com/en/models/2760568)) are metric-only, and the Customizer does not expose the OpenSCAD source. **Scale3MF** lets you download the closest metric size, scale the X/Y dimensions to the SAE fastener you actually have, and open the result in Bambu Studio.
 
-Takes a metric 3MF model (e.g. M8 nut cap from MakerWorld Customizer) and scales the X/Y dimensions to match the closest SAE fastener size. Z is never scaled by default (scale factor 1.0) — the socket depth stays the same. Z scaling is available when needed via `--z` (CLI) or the Z scale slider (GUI).
+Z is left untouched by default so socket depths stay correct; optional Z scaling is available for special cases.
 
-## Why
+## Features
 
-MakerWorld's parametric models (like the [Parametric Nut Caps & Knobs System](https://makerworld.com/en/models/2760568)) are metric-only. The Customizer doesn't expose the OpenSCAD source code, so you can't just type in SAE dimensions. This tool lets you:
-
-1. Download the closest metric size from the Customizer
-2. Scale it to your SAE fastener size
-3. Open the result in Bambu Studio and slice
+- **Python CLI** — cross-platform, stdlib-only, scriptable.
+- **Native macOS app** — drag & drop droplet GUI plus full CLI mode.
+- **Five fastener types** — hex head bolts, hex nuts, nylock nuts, socket head cap screws, button head cap screws.
+- **Four conversion directions** — Metric→SAE, Metric→Metric, SAE→Metric, SAE→SAE.
+- **8020 extrusion profile scaling** — metric↔imperial T-slot presets.
+- **Transform-aware** — scales existing 3MF `<item>` matrices when present.
+- **Vertex fallback** — scales raw `<vertex>` coordinates for plain MakerWorld exports.
+- **Round-trip safe** — preserves namespaces, comments, metadata, and self-closing tags.
 
 ## Supported Fastener Types
 
@@ -28,7 +31,42 @@ MakerWorld's parametric models (like the [Parametric Nut Caps & Knobs System](ht
 | Socket Head Cap Screw | Head Diameter | `socket_head_cap` |
 | Button Head Cap Screw | Head Diameter | `button_head_cap` |
 
-Dimensions are loaded from `fastener-dimensions.json` (compiled from ASME B18.2.1, B18.2.2, B18.3, B18.16.6, ISO 4014, ISO 4762, ISO 7380, DIN 931/934/985/982). Falls back to hardcoded hex head table if JSON is missing.
+Dimensions are loaded from `fastener-dimensions.json` (compiled from ASME B18.2.1, B18.2.2, B18.3, B18.16.6, ISO 4014, ISO 4762, ISO 7380, DIN 931/934/985/982). A hardcoded fallback covers the core hex head table if the JSON is missing.
+
+## Installation
+
+### Python CLI
+
+No install step is required. Just clone the repo and run `scale_3mf.py`.
+
+```bash
+git clone https://github.com/pixel-placebo-lab/scale-3mf.git
+cd scale-3mf
+python3 scale_3mf.py --help
+```
+
+Requires Python 3.6 or later. No third-party packages are used.
+
+### macOS App
+
+Build from source with Swift Package Manager:
+
+```bash
+git clone https://github.com/pixel-placebo-lab/scale-3mf.git
+cd scale-3mf
+swift build
+```
+
+The executable is produced at `.build/debug/Scale3MF`.
+
+To produce the `.app` bundle:
+
+```bash
+swift build
+# Then package/copy the built executable into Scale3MF.app/Contents/MacOS/Scale3MF
+```
+
+Requires macOS 14 (Sonoma) or later and Swift 5.10 or later.
 
 ## Usage — Python CLI
 
@@ -39,13 +77,13 @@ python3 scale_3mf.py --table
 # Print table for nylock nuts
 python3 scale_3mf.py --table --fastener-type nylock_nut
 
-# Scale for 5/16" SAE (auto-picks M8, scale=0.9769)
+# Scale a metric M8 model to the closest SAE 5/16"
 python3 scale_3mf.py model.3mf --sae 5/16
 
-# Scale for 5/16" SAE with explicit metric source
+# Explicitly choose the metric source size
 python3 scale_3mf.py model.3mf --sae 5/16 --metric M8
 
-# Scale for nylock nut
+# Scale a nylock nut model
 python3 scale_3mf.py model.3mf --sae 5/16 --fastener-type nylock_nut
 
 # Manual scale factor
@@ -57,17 +95,21 @@ python3 scale_3mf.py model.3mf --sae 5/16 --z 0.95
 # Specify output path
 python3 scale_3mf.py model.3mf --sae 5/16 -o my_t_handle.3mf
 
-# Dry run (show what would be done)
+# Dry run
 python3 scale_3mf.py model.3mf --sae 5/16 --dry-run
+
+# Metric-to-metric resize
+python3 scale_3mf.py model.3mf --metric M8 --target-metric M10
+
+# 8020 profile scaling
+python3 scale_3mf.py model.3mf --profile-scale 2020_to_1515
 ```
 
-## Usage — Swift Droplet App
-
-**Location:** Mac Pro at `~/Projects/scale-3mf/`
+## Usage — macOS App
 
 ### GUI Mode
 
-Drag .3MF files onto the window. Pick SAE size from the picker. Toggle Z scale and adjust the slider if needed. Output appears next to input with `_s{factor}` suffix (and `_z{factor}` if Z-scaled).
+Drag one or more `.3mf` files onto the app window. Choose the source and target fastener sizes, enable Z scaling if needed, and click **Scale**. Output files are written next to the inputs with a `_s{factor}` suffix (and `_z{factor}` when Z scaling is used).
 
 ### CLI Mode
 
@@ -85,44 +127,23 @@ Drag .3MF files onto the window. Pick SAE size from the picker. Toggle Z scale a
 .build/debug/Scale3MF model.3mf --factor 0.977 -o output.3mf
 ```
 
-## Conversion Table (Hex Head)
-
-```
-SAE      SAE(mm)    Metric   Metric(mm)   Scale
-1/4           11.11  M6              10.00      1.1110
-5/16          12.70  M8              13.00      0.9769
-3/8           14.29  M10             16.00      0.8931
-7/16          15.88  M10             16.00      0.9925
-1/2           19.05  M12             18.00      1.0583
-9/16          22.23  M14             21.00      1.0586
-5/8           23.81  M16             24.00      0.9921
-3/4           28.58  M20             30.00      0.9527
-7/8           34.93  M22             34.00      1.0274
-1             41.28  M24             36.00      1.1467
-```
-
-The `◀` marker (in CLI output) indicates sizes with less than 3% difference — best candidates for scaling.
-
 ## How It Works
 
-3MF files are ZIP archives containing XML (`3D/3dmodel.model`) with mesh data. The tool:
+3MF files are ZIP archives containing XML (`3D/3dmodel.model`) with mesh data. Scale3MF:
 
-1. **Unzips** the 3MF
-2. **Checks for transform matrices** in `<item>` elements — if present, scales the X/Y (and optionally Z) components
+1. **Unzips** the 3MF.
+2. **Looks for transform matrices** in `<item>` elements and scales the X/Y (and optionally Z) components.
    - 3MF transform layout (row-major): `r00 r01 r02 r10 r11 r12 r20 r21 r22 tx ty tz`
-   - X/Y scale: r00, r01, r10, r11 (rotation columns 0-1) + tx, ty (translation X/Y)
-   - Z scale (optional): r22 (rotation Z) + tz (translation Z)
-   - Untouched: r02, r12, r20, r21 (and r22, tz when Z scale = 1.0)
-3. **Falls back to vertex scaling** — if no transforms are found (common for MakerWorld Customizer exports), scales all `<vertex>` X/Y (and optionally Z) coordinates directly
-4. **Re-zips** into a new 3MF, preserving all XML structure, namespaces, comments, and metadata
-
-**Self-closing tags** are preserved (`<vertex .../>` stays as-is, not expanded to `<vertex ...></vertex>`).
-
-**XML comments** are preserved through the round-trip.
+   - X/Y scale: `r00`, `r01`, `r10`, `r11` + `tx`, `ty`
+   - Z scale (optional): `r22` + `tz`
+   - Untouched: `r02`, `r12`, `r20`, `r21` (and `r22`, `tz` when Z scale = 1.0)
+3. **Falls back to vertex scaling** when no transforms are present — common for MakerWorld Customizer exports.
+4. **Re-zips** into a new 3MF, preserving XML structure, namespaces, comments, and self-closing tags.
 
 ## Bambu Studio Compatibility
 
 Tested with 3MF files exported by:
+
 - MakerWorld Customizer (plain 3MF, vertex-based)
 - Bambu Studio project exports (with BambuStudio XML namespaces)
 
@@ -131,8 +152,12 @@ Output 3MFs open correctly in Bambu Studio.
 ## Requirements
 
 - **Python CLI:** Python 3.6+, no external dependencies (stdlib only)
-- **Swift app:** macOS 12+, Swift 5.7+, [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) package
+- **macOS app:** macOS 14+, Swift 5.10+, [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) package
+
+## Contributing
+
+Issues and pull requests are welcome. If you find a model that does not round-trip cleanly, please attach the smallest 3MF that reproduces the issue.
 
 ## License
 
-MIT
+[MIT](./LICENSE) © Pixel Placebo Lab
