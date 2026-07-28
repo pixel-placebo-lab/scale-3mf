@@ -33,6 +33,8 @@ Z is left untouched by default so socket depths stay correct; optional Z scaling
 
 Dimensions are loaded from `fastener-dimensions.json` (compiled from ASME B18.2.1, B18.2.2, B18.3, B18.16.6, ISO 4014, ISO 4762, ISO 7380, DIN 931/934/985/982). A hardcoded fallback covers the core hex head table if the JSON is missing.
 
+8020 extrusion profile presets are loaded from `extrusion-profiles.json`. Edit that file or supply your own to add custom profile mappings without recompiling the app.
+
 ## Installation
 
 ### Python CLI
@@ -49,6 +51,10 @@ Requires Python 3.6 or later. No third-party packages are used.
 
 ### macOS App
 
+A pre-built, ad-hoc signed `.app` bundle is attached to each [GitHub Release](https://github.com/pixel-placebo-lab/scale-3mf/releases). Download `Scale3MF.app.zip`, unzip it, and drag `Scale3MF.app` to `/Applications`.
+
+> **macOS Gatekeeper:** Because the app is ad-hoc signed (no Apple Developer ID), opening it the first time may show “Apple could not verify...”. Right-click the app and choose **Open**, then click **Open** in the dialog. After that, double-clicking works normally.
+
 Build from source with Swift Package Manager:
 
 ```bash
@@ -59,11 +65,13 @@ swift build
 
 The executable is produced at `.build/debug/Scale3MF`.
 
-To produce the `.app` bundle:
+To produce the `.app` bundle and ad-hoc sign it:
 
 ```bash
 swift build
-# Then package/copy the built executable into Scale3MF.app/Contents/MacOS/Scale3MF
+rm -rf Scale3MF.app/Contents/MacOS/Scale3MF
+cp .build/debug/Scale3MF Scale3MF.app/Contents/MacOS/Scale3MF
+codesign --force --deep --sign - Scale3MF.app
 ```
 
 Requires macOS 14 (Sonoma) or later and Swift 5.10 or later.
@@ -153,6 +161,7 @@ Output 3MFs open correctly in Bambu Studio.
 
 - **Python CLI:** Python 3.6+, no external dependencies (stdlib only)
 - **macOS app:** macOS 14+, Swift 5.10+, [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) package
+- **Config files:** `fastener-dimensions.json`, `fastener-heights.json`, and `extrusion-profiles.json` must be present in the app bundle (or the working directory for CLI use).
 
 ## Contributing
 

@@ -18,7 +18,10 @@ let package = Package(
             ],
             resources: [
                 .copy("fastener-dimensions.json"),
-                .copy("fastener-heights.json")
+                .copy("fastener-heights.json"),
+                .copy("extrusion-profiles.json"),
+                .copy("app_icon.icns"),
+                .copy("app_icon.png")
             ],
             swiftSettings: [
                 .define("SWIFT_PACKAGE")

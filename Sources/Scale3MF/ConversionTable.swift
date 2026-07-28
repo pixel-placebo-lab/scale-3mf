@@ -75,7 +75,7 @@ struct ConversionTable {
     static let baseMetricSizes = ["M3", "M4", "M5", "M6", "M8", "M10", "M12", "M14", "M16", "M20", "M22", "M24"]
 
     // MARK: - 8020 Extrusion Profile Data
-    // Both directions: metric→imperial and imperial→metric
+    // Loaded from extrusion-profiles.json (bundled or sibling to executable) at first use.
     struct ExtrusionProfile {
         let name: String          // human-readable label
         let sourceLabel: String   // e.g. "20×20mm, slot 8mm"
@@ -86,53 +86,49 @@ struct ConversionTable {
         let isMetricToImperial: Bool
     }
 
-    static let extrusionProfiles: [(key: String, profile: ExtrusionProfile)] = [
-        // Metric → Imperial
-        ("2020-to-1010", ExtrusionProfile(
-            name: "20×20mm → 1.00×1.00\" (1010)",
-            sourceLabel: "20×20mm, T-slot 8mm",
-            targetLabel: "1.00×1.00\", T-slot 0.250\"",
-            scale: 25.4 / 20, sourceSlot: 8.0, targetSlot: 6.35, isMetricToImperial: true)),
-        ("2020-to-1515", ExtrusionProfile(
-            name: "20×20mm → 1.50×1.50\" (1515)",
-            sourceLabel: "20×20mm, T-slot 8mm",
-            targetLabel: "1.50×1.50\", T-slot 0.370\"",
-            scale: 38.1 / 20, sourceSlot: 8.0, targetSlot: 9.40, isMetricToImperial: true)),
-        ("2040-to-1020", ExtrusionProfile(
-            name: "20×40mm → 1.00×2.00\" (1020)",
-            sourceLabel: "20×40mm, T-slot 8mm",
-            targetLabel: "1.00×2.00\", T-slot 0.250\"",
-            scale: 25.4 / 20, sourceSlot: 8.0, targetSlot: 6.35, isMetricToImperial: true)),
-        ("2040-to-1540", ExtrusionProfile(
-            name: "20×40mm → 1.50×3.00\" (1540)",
-            sourceLabel: "20×40mm, T-slot 8mm",
-            targetLabel: "1.50×3.00\", T-slot 0.370\"",
-            scale: 38.1 / 20, sourceSlot: 8.0, targetSlot: 9.40, isMetricToImperial: true)),
-        // Imperial → Metric
-        ("1010-to-2020", ExtrusionProfile(
-            name: "1.00×1.00\" → 20×20mm (1010→2020)",
-            sourceLabel: "1.00×1.00\", T-slot 0.250\"",
-            targetLabel: "20×20mm, T-slot 8mm",
-            scale: 20 / 25.4, sourceSlot: 6.35, targetSlot: 8.0, isMetricToImperial: false)),
-        ("1515-to-2020", ExtrusionProfile(
-            name: "1.50×1.50\" → 20×20mm (1515→2020)",
-            sourceLabel: "1.50×1.50\", T-slot 0.370\"",
-            targetLabel: "20×20mm, T-slot 8mm",
-            scale: 20 / 38.1, sourceSlot: 9.40, targetSlot: 8.0, isMetricToImperial: false)),
-        ("1020-to-2040", ExtrusionProfile(
-            name: "1.00×2.00\" → 20×40mm (1020→2040)",
-            sourceLabel: "1.00×2.00\", T-slot 0.250\"",
-            targetLabel: "20×40mm, T-slot 8mm",
-            scale: 20 / 25.4, sourceSlot: 6.35, targetSlot: 8.0, isMetricToImperial: false)),
-        ("1540-to-2040", ExtrusionProfile(
-            name: "1.50×3.00\" → 20×40mm (1540→2040)",
-            sourceLabel: "1.50×3.00\", T-slot 0.370\"",
-            targetLabel: "20×40mm, T-slot 8mm",
-            scale: 20 / 38.1, sourceSlot: 9.40, targetSlot: 8.0, isMetricToImperial: false)),
-    ]
+    private static var loadedExtrusionProfiles: [(key: String, profile: ExtrusionProfile)]?
+
+    static var extrusionProfiles: [(key: String, profile: ExtrusionProfile)] {
+        if let cached = loadedExtrusionProfiles { return cached }
+        let loaded = loadExtrusionProfilesFromJSON() ?? []
+        loadedExtrusionProfiles = loaded
+        return loaded
+    }
 
     static func extrusionProfile(forKey key: String) -> ExtrusionProfile? {
         extrusionProfiles.first { $0.key == key }?.profile
+    }
+
+    private static func loadExtrusionProfilesFromJSON() -> [(key: String, profile: ExtrusionProfile)]? {
+        guard let url = locateResource(named: "extrusion-profiles.json"),
+              let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let profiles = json["profiles"] as? [[String: Any]] else {
+            return nil
+        }
+
+        var result: [(key: String, profile: ExtrusionProfile)] = []
+        for p in profiles {
+            guard let key = p["key"] as? String,
+                  let name = p["name"] as? String,
+                  let sourceLabel = p["sourceLabel"] as? String,
+                  let targetLabel = p["targetLabel"] as? String,
+                  let scale = p["scale"] as? Double,
+                  let sourceSlot = p["sourceSlot"] as? Double,
+                  let targetSlot = p["targetSlot"] as? Double,
+                  let isMetricToImperial = p["isMetricToImperial"] as? Bool else {
+                continue
+            }
+            result.append((key, ExtrusionProfile(
+                name: name,
+                sourceLabel: sourceLabel,
+                targetLabel: targetLabel,
+                scale: scale,
+                sourceSlot: sourceSlot,
+                targetSlot: targetSlot,
+                isMetricToImperial: isMetricToImperial)))
+        }
+        return result.isEmpty ? nil : result
     }
 
     private static var loadedEntries: [SAEEntry]?

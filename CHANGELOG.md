@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.4.0] - 2026-07-28
+
+### Added
+- **Externalized 8020 extrusion profile config** — `extrusionProfiles` moved from hardcoded Swift arrays to `extrusion-profiles.json`. Add or edit profile presets without recompiling.
+- **App icon** — `app_icon.icns` embedded in the `.app` bundle and referenced in `Info.plist` (`CFBundleIconFile`).
+- **Ad-hoc signed `.app` bundle** — Release `.app` is now built, deep-signed with `codesign --force --deep --sign -`, and attached to GitHub Releases.
+- **GitHub Release workflow** — Tagged release `v1.4.0` with `Scale3MF.app.zip` asset and signed `.app` bundle.
+
+### Changed
+- **README** — Added pre-built download instructions, Gatekeeper note, ad-hoc signing caveat, config-file note, and updated build-from-source steps.
+- **Package.swift** — Added `extrusion-profiles.json` as a copied resource for the Swift executable target.
+
 ## [1.3.0] - 2026-07-11
 
 ### Added
