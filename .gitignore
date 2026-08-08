@@ -2,3 +2,5 @@
 .swiftpm/
 *.xcodeproj/
 Scale3MF.app/
+# Build artifacts
+*.zip
