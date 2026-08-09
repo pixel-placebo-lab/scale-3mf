@@ -26,6 +26,15 @@ let package = Package(
             swiftSettings: [
                 .define("SWIFT_PACKAGE")
             ]
+        ),
+        .testTarget(
+            name: "Scale3MFTests",
+            dependencies: ["Scale3MF"],
+            resources: [
+                .copy("fastener-dimensions.json"),
+                .copy("fastener-heights.json"),
+                .copy("extrusion-profiles.json")
+            ]
         )
     ]
 )

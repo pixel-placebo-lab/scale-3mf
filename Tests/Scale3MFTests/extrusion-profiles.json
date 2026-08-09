@@ -1,0 +1,84 @@
+{
+  "profiles": [
+    {
+      "key": "2020-to-1010",
+      "name": "20×20mm → 1.00×1.00\" (1010)",
+      "sourceLabel": "20×20mm, T-slot 8mm",
+      "targetLabel": "1.00×1.00\", T-slot 0.250\"",
+      "scale": 1.27,
+      "sourceSlot": 8.0,
+      "targetSlot": 6.35,
+      "isMetricToImperial": true
+    },
+    {
+      "key": "2020-to-1515",
+      "name": "20×20mm → 1.50×1.50\" (1515)",
+      "sourceLabel": "20×20mm, T-slot 8mm",
+      "targetLabel": "1.50×1.50\", T-slot 0.370\"",
+      "scale": 1.905,
+      "sourceSlot": 8.0,
+      "targetSlot": 9.40,
+      "isMetricToImperial": true
+    },
+    {
+      "key": "2040-to-1020",
+      "name": "20×40mm → 1.00×2.00\" (1020)",
+      "sourceLabel": "20×40mm, T-slot 8mm",
+      "targetLabel": "1.00×2.00\", T-slot 0.250\"",
+      "scale": 1.27,
+      "sourceSlot": 8.0,
+      "targetSlot": 6.35,
+      "isMetricToImperial": true
+    },
+    {
+      "key": "2040-to-1540",
+      "name": "20×40mm → 1.50×3.00\" (1540)",
+      "sourceLabel": "20×40mm, T-slot 8mm",
+      "targetLabel": "1.50×3.00\", T-slot 0.370\"",
+      "scale": 1.905,
+      "sourceSlot": 8.0,
+      "targetSlot": 9.40,
+      "isMetricToImperial": true
+    },
+    {
+      "key": "1010-to-2020",
+      "name": "1.00×1.00\" → 20×20mm (1010→2020)",
+      "sourceLabel": "1.00×1.00\", T-slot 0.250\"",
+      "targetLabel": "20×20mm, T-slot 8mm",
+      "scale": 0.7874015748031495,
+      "sourceSlot": 6.35,
+      "targetSlot": 8.0,
+      "isMetricToImperial": false
+    },
+    {
+      "key": "1515-to-2020",
+      "name": "1.50×1.50\" → 20×20mm (1515→2020)",
+      "sourceLabel": "1.50×1.50\", T-slot 0.370\"",
+      "targetLabel": "20×20mm, T-slot 8mm",
+      "scale": 0.5249343832020997,
+      "sourceSlot": 9.40,
+      "targetSlot": 8.0,
+      "isMetricToImperial": false
+    },
+    {
+      "key": "1020-to-2040",
+      "name": "1.00×2.00\" → 20×40mm (1020→2040)",
+      "sourceLabel": "1.00×2.00\", T-slot 0.250\"",
+      "targetLabel": "20×40mm, T-slot 8mm",
+      "scale": 0.7874015748031495,
+      "sourceSlot": 6.35,
+      "targetSlot": 8.0,
+      "isMetricToImperial": false
+    },
+    {
+      "key": "1540-to-2040",
+      "name": "1.50×3.00\" → 20×40mm (1540→2040)",
+      "sourceLabel": "1.50×3.00\", T-slot 0.370\"",
+      "targetLabel": "20×40mm, T-slot 8mm",
+      "scale": 0.5249343832020997,
+      "sourceSlot": 9.40,
+      "targetSlot": 8.0,
+      "isMetricToImperial": false
+    }
+  ]
+}

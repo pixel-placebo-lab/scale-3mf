@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **ROADMAP.md** — Project roadmap with completed milestones (v1.0–v1.4), near-term goals (tests, CI, batch mode), and long-term experimental features.
+- **Swift test target** — 36 unit tests covering ConversionTable (fallback data, scale factors, fastener types, metric/SAE dimension lookups, formatted tables, extrusion profiles) and Converter (transform scaling, vertex scaling, Z scaling, XML comment/self-closing tag preservation, error handling, result metadata).
+
+### Changed
+- **Package.swift** — Added `Scale3MFTests` test target with JSON resource copies.
+
 ## [1.4.0] - 2026-07-28
 
 ### Added
