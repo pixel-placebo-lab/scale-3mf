@@ -141,6 +141,17 @@ struct ContentView: View {
 
     // MARK: - Body
 
+    private var windowTitle: String {
+        if !results.isEmpty {
+            let last = results.last!
+            if last.success {
+                return "Scale3MF — \(last.inputName)"
+            }
+            return "Scale3MF — \(last.inputName) (error)"
+        }
+        return "Scale3MF — No file"
+    }
+
     var body: some View {
         VStack(spacing: 14) {
             VStack(spacing: 2) {
@@ -152,9 +163,14 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
             }
             .padding(.top, 12)
+            .accessibilityIdentifier("app-header")
+            .accessibilityLabel("Scale3MF")
 
             dropZone
                 .frame(maxWidth: .infinity, minHeight: 120)
+                .accessibilityIdentifier("drop-zone")
+                .accessibilityLabel("Drop 3MF Files")
+                .accessibilityHint("Drop .3mf files here to scale them")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -170,6 +186,9 @@ struct ContentView: View {
                                 }
                             }
                             .pickerStyle(MenuPickerStyle())
+                            .accessibilityIdentifier("fastener-type")
+                            .accessibilityLabel("Fastener Type")
+                            .accessibilityValue(selectedFastener.displayName)
                             .onChange(of: selectedFastener) { _, _ in
                                 if !saeSizes.contains(selectedSAE), let first = saeSizes.first {
                                     selectedSAE = first
@@ -193,10 +212,16 @@ struct ContentView: View {
                     // Mode picker (segmented)
                     Picker("Mode", selection: $scaleMode) {
                         ForEach(ScaleMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
+                            Text(mode.displayName)
+                                .tag(mode)
+                                .accessibilityIdentifier("mode-\(mode.rawValue)")
+                                .accessibilityLabel("\(mode.displayName) Mode")
                         }
                     }
                     .pickerStyle(SegmentedPickerStyle())
+                    .accessibilityIdentifier("mode-info")
+                    .accessibilityLabel("Current Mode")
+                    .accessibilityValue(scaleMode.displayName)
 
                     switch scaleMode {
                     case .simple:
@@ -212,12 +237,17 @@ struct ContentView: View {
                         Toggle("Z Scale", isOn: $zScaleEnabled)
                             .font(.caption)
                             .foregroundColor(.secondary)
+                            .accessibilityIdentifier("chk-z-scale")
+                            .accessibilityLabel("Z Scale")
                         if zScaleEnabled {
                             HStack {
                                 Text("Z Factor")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 Slider(value: $zScaleFactor, in: 0.1...3.0, step: 0.001)
+                                    .accessibilityIdentifier("scale-slider")
+                                    .accessibilityLabel("Z Scale Factor")
+                                    .accessibilityValue(String(format: "%.3f", zScaleFactor))
                                 Text(String(format: "%.3f", zScaleFactor))
                                     .font(.caption)
                                     .fontWeight(.semibold)
@@ -229,17 +259,41 @@ struct ContentView: View {
                 .padding(.horizontal)
             }
 
-            Button(action: selectFileAndScale) {
-                Text("Scale")
-                    .frame(minWidth: 120)
+            HStack(spacing: 12) {
+                Button(action: selectFileAndScale) {
+                    Text("Scale")
+                        .frame(minWidth: 120)
+                }
+                .disabled(scaleMode == .advanced ? !advancedScaleValid : (scaleMode == .profile ? selectedProfile == nil : selectedEntry == nil))
+                .accessibilityIdentifier("btn-scale")
+                .accessibilityLabel("Scale 3MF")
+                .accessibilityHint("Open a .3mf file and scale it")
+
+                Button(action: resetScale) {
+                    Text("Reset")
+                        .frame(minWidth: 80)
+                }
+                .accessibilityIdentifier("btn-reset")
+                .accessibilityLabel("Reset Scale")
+                .accessibilityHint("Reset all scale settings to defaults")
+
+                Button(action: openFile) {
+                    Text("Open")
+                        .frame(minWidth: 60)
+                }
+                .accessibilityIdentifier("btn-open")
+                .accessibilityLabel("Open 3MF")
+                .accessibilityHint("Open a .3mf file for inspection")
             }
-            .disabled(scaleMode == .advanced ? !advancedScaleValid : (scaleMode == .profile ? selectedProfile == nil : selectedEntry == nil))
 
             Text(statusText)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
+                .accessibilityIdentifier("status-text")
+                .accessibilityLabel("Status")
+                .accessibilityValue(statusText)
 
             if !results.isEmpty {
                 List {
@@ -247,18 +301,28 @@ struct ContentView: View {
                         HStack {
                             Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
                                 .foregroundColor(result.success ? .green : .red)
+                                .accessibilityIdentifier("result-icon")
+                                .accessibilityLabel(result.success ? "Success" : "Failure")
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(result.inputName)
                                     .lineLimit(1)
+                                    .accessibilityIdentifier("input-filename")
+                                    .accessibilityLabel("Input File")
+                                    .accessibilityValue(result.inputName)
                                 Text(result.message)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                     .lineLimit(2)
+                                    .accessibilityIdentifier("output-dimensions")
+                                    .accessibilityLabel("Output Details")
+                                    .accessibilityValue(result.message)
                             }
                         }
+                        .accessibilityIdentifier("result-item")
                     }
                 }
                 .frame(minHeight: 60, maxHeight: 100)
+                .accessibilityIdentifier("results-list")
             }
 
             Spacer()
@@ -267,8 +331,12 @@ struct ContentView: View {
                 .font(.caption2)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 8)
+                .accessibilityIdentifier("app-version")
+                .accessibilityLabel("Version")
+                .accessibilityValue(ConversionTable.appVersion)
         }
         .frame(width: 400, height: 740)
+        .navigationTitle(windowTitle)
     }
 
     // MARK: - Simple controls
@@ -285,6 +353,9 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(MenuPickerStyle())
+                .accessibilityIdentifier("sae-size")
+                .accessibilityLabel("Target SAE Size")
+                .accessibilityValue(selectedSAE)
             }
 
             if let entry = selectedEntry {
@@ -306,11 +377,20 @@ struct ContentView: View {
                             .font(.body)
                             .fontWeight(.semibold)
                             .foregroundColor(entry.scaleFactor < 1.0 ? .orange : .green)
+                        Text("\(String(format: "%.1f%%", entry.scaleFactor * 100))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .accessibilityIdentifier("scale-percent")
+                            .accessibilityLabel("Scale Percentage")
+                            .accessibilityValue(String(format: "%.1f%%", entry.scaleFactor * 100))
                     }
                 }
                 .padding(.vertical, 6)
                 .padding(.horizontal, 10)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+                .accessibilityIdentifier("scale-ratio")
+                .accessibilityLabel("Scale Ratio")
+                .accessibilityValue(String(format: "%.4f", entry.scaleFactor))
             }
         }
     }
@@ -330,6 +410,9 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(SegmentedPickerStyle())
+                .accessibilityIdentifier("source-type")
+                .accessibilityLabel("Source Type")
+                .accessibilityValue(selectedSourceType.displayName)
             }
 
             // Source size
@@ -344,6 +427,9 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(MenuPickerStyle())
+                    .accessibilityIdentifier("source-size")
+                    .accessibilityLabel("Source Metric Size")
+                    .accessibilityValue(selectedSourceMetric)
                 } else {
                     Picker("Source SAE", selection: $selectedSourceSAE) {
                         ForEach(saeSizes, id: \.self) { size in
@@ -351,6 +437,9 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(MenuPickerStyle())
+                    .accessibilityIdentifier("source-size")
+                    .accessibilityLabel("Source SAE Size")
+                    .accessibilityValue(selectedSourceSAE)
                 }
             }
 
@@ -365,6 +454,9 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(SegmentedPickerStyle())
+                .accessibilityIdentifier("target-type")
+                .accessibilityLabel("Target Type")
+                .accessibilityValue(selectedTargetType.displayName)
             }
 
             // Target size
@@ -379,6 +471,9 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(MenuPickerStyle())
+                    .accessibilityIdentifier("target-size")
+                    .accessibilityLabel("Target SAE Size")
+                    .accessibilityValue(selectedTargetSAE)
                 } else {
                     Picker("Target Metric Size", selection: $selectedTargetMetric) {
                         ForEach(metricSizes, id: \.self) { size in
@@ -386,6 +481,9 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(MenuPickerStyle())
+                    .accessibilityIdentifier("target-size")
+                    .accessibilityLabel("Target Metric Size")
+                    .accessibilityValue(selectedTargetMetric)
                 }
             }
 
@@ -409,6 +507,12 @@ struct ContentView: View {
                             .font(.body)
                             .fontWeight(.semibold)
                             .foregroundColor(scale < 1.0 ? .orange : .green)
+                        Text("\(String(format: "%.1f%%", scale * 100))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .accessibilityIdentifier("scale-percent")
+                            .accessibilityLabel("Scale Percentage")
+                            .accessibilityValue(String(format: "%.1f%%", scale * 100))
                     } else {
                         Text("—")
                             .font(.body)
@@ -419,6 +523,9 @@ struct ContentView: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+            .accessibilityIdentifier("scale-ratio")
+            .accessibilityLabel("Scale Ratio")
+            .accessibilityValue(advancedScale != nil ? String(format: "%.4f", advancedScale!) : "invalid")
         }
     }
 
@@ -436,6 +543,9 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(MenuPickerStyle())
+                .accessibilityIdentifier("profile-preset")
+                .accessibilityLabel("Profile Preset")
+                .accessibilityValue(selectedProfile?.name ?? "none")
             }
 
             if let p = selectedProfile {
@@ -457,6 +567,12 @@ struct ContentView: View {
                             .font(.body)
                             .fontWeight(.semibold)
                             .foregroundColor(p.scale < 1.0 ? .orange : .green)
+                        Text("\(String(format: "%.1f%%", p.scale * 100))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .accessibilityIdentifier("scale-percent")
+                            .accessibilityLabel("Scale Percentage")
+                            .accessibilityValue(String(format: "%.1f%%", p.scale * 100))
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 2) {
@@ -472,6 +588,9 @@ struct ContentView: View {
                 .padding(.vertical, 6)
                 .padding(.horizontal, 10)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+                .accessibilityIdentifier("scale-ratio")
+                .accessibilityLabel("Scale Ratio")
+                .accessibilityValue(String(format: "%.4f", p.scale))
 
                 // T-slot analysis
                 if let after = profileSlotAfterScale, let mismatch = profileSlotMismatch {
@@ -554,6 +673,35 @@ struct ContentView: View {
                 self.scaleFile(url)
             }
         }
+    }
+
+    private func openFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "3mf")].compactMap { $0 }
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                self.statusText = "Loaded: \(url.lastPathComponent)"
+            }
+        }
+    }
+
+    private func resetScale() {
+        selectedFastener = .hexHead
+        selectedSAE = "1/4"
+        scaleMode = .simple
+        selectedSourceType = .metric
+        selectedSourceMetric = "M8"
+        selectedSourceSAE = "1/4"
+        selectedTargetType = .sae
+        selectedTargetSAE = "3/8"
+        selectedTargetMetric = "M10"
+        selectedProfileKey = "2020-to-1010"
+        zScaleEnabled = false
+        zScaleFactor = 1.0
+        results = []
+        statusText = "Drop a .3MF file to scale"
     }
 
     private func scaleFile(_ url: URL) {
