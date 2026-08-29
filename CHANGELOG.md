@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **AXorcist accessibility** — Added `accessibilityIdentifier`, `accessibilityLabel`, and `accessibilityValue` modifiers to scale controls, fastener type popup, mode selectors, action buttons, and file info. Enables remote UI reading via `axorc find --app Scale3MF --identifier <id>`.
+### Added
 - **ROADMAP.md** — Project roadmap with completed milestones (v1.0–v1.4), near-term goals (tests, CI, batch mode), and long-term experimental features.
 - **Swift test target** — 36 unit tests covering ConversionTable (fallback data, scale factors, fastener types, metric/SAE dimension lookups, formatted tables, extrusion profiles) and Converter (transform scaling, vertex scaling, Z scaling, XML comment/self-closing tag preservation, error handling, result metadata).
 
