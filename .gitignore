@@ -4,3 +4,6 @@
 Scale3MF.app/
 # Build artifacts
 *.zip
+
+# Python bytecode
+__pycache__/
