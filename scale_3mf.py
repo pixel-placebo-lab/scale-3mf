@@ -13,7 +13,15 @@ import os
 import re
 import sys
 import tempfile
-import zipfile
+import importlib.util
+
+# Shared 3MF library — extract_3mf / repackage_3mf (3mf-tooling family
+# consolidation, card ff043e2c). The regex-based transform/vertex rewrite below
+# is deliberately string-preserving and stays local to this script.
+_LIB_PATH = '/Users/sulk_imac/Projects/3mf-tooling/3mf_lib.py'
+_spec = importlib.util.spec_from_file_location('mf_lib', _LIB_PATH)
+lib = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(lib)
 
 # ─── Data ─────────────────────────────────────────────────────────────
 # Loaded from fastener-dimensions.json if available, falls back to hardcoded
@@ -174,8 +182,7 @@ def scale_3mf(input_path, scale_xy=1.0, scale_z=1.0, output_path=None):
         output_path = f"{base}{suffix}{ext}"
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        with zipfile.ZipFile(input_path, 'r') as zin:
-            zin.extractall(tmpdir)
+        lib.extract_3mf(input_path, tmpdir)
 
         model_dir = os.path.join(tmpdir, '3D')
         if not os.path.isdir(model_dir):
@@ -262,12 +269,7 @@ def scale_3mf(input_path, scale_xy=1.0, scale_z=1.0, output_path=None):
         if total_transforms == 0 and total_vertices == 0:
             print(f"  ⚠️  No transforms or vertices found to scale!")
 
-        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zout:
-            for root, dirs, files in os.walk(tmpdir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, tmpdir)
-                    zout.write(file_path, arcname)
+        lib.repackage_3mf(tmpdir, output_path)
 
     print(f"  ✓ Output: {output_path}")
     return output_path
