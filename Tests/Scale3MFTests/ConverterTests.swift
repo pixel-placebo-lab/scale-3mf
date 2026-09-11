@@ -378,4 +378,230 @@ final class ConverterTests: XCTestCase {
                        "Output filename should contain the scale factor. Got: \(result.output.lastPathComponent)")
         XCTAssertTrue(result.output.lastPathComponent.hasSuffix(".3mf"))
     }
+
+    // MARK: - Matrix Correctness Tests (Sep 2026 review fixes)
+
+    /// Extract the first transform="..." attribute as 12 doubles (row-major
+    /// 4×3: m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31 m32).
+    private func firstTransformValues(in xml: String) -> [Double] {
+        guard let open = xml.range(of: "transform=\""),
+              let close = xml.range(of: "\"", range: open.upperBound..<xml.endIndex)
+        else { return [] }
+        return xml[open.upperBound..<close.lowerBound]
+            .split(separator: " ")
+            .compactMap { Double($0) }
+    }
+
+    /// Extract an <object id="N"> ... </object> block.
+    private func objectBlock(_ id: String, in xml: String) -> String {
+        let start = xml.range(of: "<object id=\"\(id)\"")!
+        let end = xml.range(of: "</object>", range: start.upperBound..<xml.endIndex)!
+        return String(xml[start.lowerBound..<end.upperBound])
+    }
+
+    private func assertMatrix(_ actual: [Double], _ expected: [Double],
+                              file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(actual.count, 12, "transform must have 12 values", file: file, line: line)
+        guard actual.count == 12, expected.count == 12 else { return }
+        for i in 0..<12 {
+            XCTAssertEqual(actual[i], expected[i], accuracy: 0.0001,
+                           "matrix element \(i): \(actual[i]) != \(expected[i])",
+                           file: file, line: line)
+        }
+    }
+
+    /// X/Y scaling of a tilted (45° about Y) transform must scale the whole
+    /// matrix as S·M — m20 included. The old code left m20/m21 unscaled,
+    /// shearing rotated objects.
+    func testXYScaleOfRotatedTransformAppliesWorldScale() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+          <resources>
+            <object id="1" type="model">
+              <mesh>
+                <vertices><vertex x="0" y="0" z="0"/></vertices>
+                <triangles><triangle v1="0" v2="0" v3="0"/></triangles>
+              </mesh>
+            </object>
+          </resources>
+          <build>
+            <item objectid="1" transform="0.7071 0 0.7071 0 1 0 -0.7071 0 0.7071 10 20 30"/>
+          </build>
+        </model>
+        """
+        let inputURL = try makeTest3MF(modelXML: xml)
+        defer { cleanup(inputURL) }
+
+        let result = try Converter.scaleWithFactor(input: inputURL, factor: 2.0)
+        defer { cleanup(result.output) }
+
+        let outputXML = try readModelXML(from: result.output)
+        // Column scaling: col0 (idx 0,3,6,9) ×2, col1 (1,4,7,10) ×2, col2 ×1
+        assertMatrix(firstTransformValues(in: outputXML),
+                     [1.4142, 0, 0.7071,
+                      0, 2, 0,
+                      -1.4142, 0, 0.7071,
+                      20, 40, 30])
+    }
+
+    /// Z scaling of a tilted (45° about X) transform must scale the whole Z
+    /// column (m02/m12/m22/m32). The old code scaled only m22/m32 → shear.
+    func testZScaleOfRotatedTransformScalesFullZColumn() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+          <resources>
+            <object id="1" type="model">
+              <mesh>
+                <vertices><vertex x="0" y="0" z="0"/></vertices>
+                <triangles><triangle v1="0" v2="0" v3="0"/></triangles>
+              </mesh>
+            </object>
+          </resources>
+          <build>
+            <item objectid="1" transform="1 0 0 0 0.7071 -0.7071 0 0.7071 0.7071 10 20 30"/>
+          </build>
+        </model>
+        """
+        let inputURL = try makeTest3MF(modelXML: xml)
+        defer { cleanup(inputURL) }
+
+        let result = try Converter.scaleWithFactor(input: inputURL, factor: 1.0, zFactor: 2.0)
+        defer { cleanup(result.output) }
+
+        let outputXML = try readModelXML(from: result.output)
+        assertMatrix(firstTransformValues(in: outputXML),
+                     [1, 0, 0,
+                      0, 0.7071, -1.4142,
+                      0, 0.7071, 1.4142,
+                      10, 20, 60])
+    }
+
+    /// A file with one transform-placed object and one vertex-placed object
+    /// must scale BOTH: the transform matrix for the first, the vertices of
+    /// the second (and NOT the first — no double scaling).
+    func testMixedObjectsBothScaled() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+          <resources>
+            <object id="1" type="model">
+              <mesh>
+                <vertices><vertex x="10" y="10" z="10"/></vertices>
+                <triangles><triangle v1="0" v2="0" v3="0"/></triangles>
+              </mesh>
+            </object>
+            <object id="2" type="model">
+              <mesh>
+                <vertices><vertex x="10" y="10" z="10"/></vertices>
+                <triangles><triangle v1="0" v2="0" v3="0"/></triangles>
+              </mesh>
+            </object>
+          </resources>
+          <build>
+            <item objectid="1" transform="1 0 0 0 1 0 0 0 1 5 5 5"/>
+            <item objectid="2"/>
+          </build>
+        </model>
+        """
+        let inputURL = try makeTest3MF(modelXML: xml)
+        defer { cleanup(inputURL) }
+
+        let result = try Converter.scaleWithFactor(input: inputURL, factor: 2.0)
+        defer { cleanup(result.output) }
+
+        let outputXML = try readModelXML(from: result.output)
+        // Object 1 scaled through its matrix (translation included)
+        assertMatrix(firstTransformValues(in: outputXML),
+                     [2, 0, 0, 0, 2, 0, 0, 0, 1, 10, 10, 5])
+        // Object 1's vertices must NOT be scaled (no double scaling)
+        let obj1 = objectBlock("1", in: outputXML)
+        XCTAssertTrue(obj1.contains("x=\"10\""), "transform-covered vertices untouched. Got: \(obj1)")
+        // Object 2 scaled via its vertices
+        let obj2 = objectBlock("2", in: outputXML)
+        XCTAssertTrue(obj2.contains("x=\"20\""), "vertex-placed object must scale. Got: \(obj2)")
+        XCTAssertTrue(obj2.contains("y=\"20\""), "vertex-placed object must scale Y. Got: \(obj2)")
+        XCTAssertTrue(obj2.contains("z=\"10\""), "Z untouched at zFactor=1. Got: \(obj2)")
+    }
+
+    /// Vertex x/y/z attributes parsed by name: reordered attributes and
+    /// extra attributes scale in place, preserving order and extras.
+    func testReorderedVertexAttributesAreScaled() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+          <resources>
+            <object id="1" type="model">
+              <mesh>
+                <vertices>
+                  <vertex z="3" y="2" x="1" p1="0.5"/>
+                  <vertex y="5" x="4" z="6"/>
+                </vertices>
+                <triangles><triangle v1="0" v2="1" v3="0"/></triangles>
+              </mesh>
+            </object>
+          </resources>
+          <build>
+            <item objectid="1"/>
+          </build>
+        </model>
+        """
+        let inputURL = try makeTest3MF(modelXML: xml)
+        defer { cleanup(inputURL) }
+
+        let result = try Converter.scaleWithFactor(input: inputURL, factor: 2.0)
+        defer { cleanup(result.output) }
+
+        let outputXML = try readModelXML(from: result.output)
+        XCTAssertTrue(outputXML.contains("<vertex z=\"3\" y=\"4\" x=\"2\" p1=\"0.5\"/>"),
+                      "Reordered attrs scale in place, preserving order + extras. Got: \(outputXML)")
+        XCTAssertTrue(outputXML.contains("<vertex y=\"10\" x=\"8\" z=\"6\"/>"),
+                      "Second reordered vertex scales. Got: \(outputXML)")
+    }
+
+    /// Scientific notation (1e0, 1e1, …) must scale in transforms AND in
+    /// vertices of vertex-placed objects — parity with the Python CLI.
+    func testScientificNotationInTransformAndVertices() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+          <resources>
+            <object id="1" type="model">
+              <mesh>
+                <vertices><vertex x="1e0" y="1e0" z="1e0"/></vertices>
+                <triangles><triangle v1="0" v2="0" v3="0"/></triangles>
+              </mesh>
+            </object>
+            <object id="2" type="model">
+              <mesh>
+                <vertices><vertex x="1e0" y="2e0" z="3e0"/></vertices>
+                <triangles><triangle v1="0" v2="0" v3="0"/></triangles>
+              </mesh>
+            </object>
+          </resources>
+          <build>
+            <item objectid="1" transform="1e0 0 0 0 1e0 0 0 0 1e0 1e1 2e1 3e1"/>
+            <item objectid="2"/>
+          </build>
+        </model>
+        """
+        let inputURL = try makeTest3MF(modelXML: xml)
+        defer { cleanup(inputURL) }
+
+        let result = try Converter.scaleWithFactor(input: inputURL, factor: 2.0)
+        defer { cleanup(result.output) }
+
+        let outputXML = try readModelXML(from: result.output)
+        // Transform with scientific notation scales
+        assertMatrix(firstTransformValues(in: outputXML),
+                     [2, 0, 0, 0, 2, 0, 0, 0, 1, 20, 40, 30])
+        // Vertices with scientific notation scale in the uncovered object
+        let obj2 = objectBlock("2", in: outputXML)
+        XCTAssertTrue(obj2.contains("<vertex x=\"2\" y=\"4\" z=\"3\"/>"),
+                      "Sci-notation vertices must scale. Got: \(obj2)")
+        // Covered object's vertices stay untouched
+        let obj1 = objectBlock("1", in: outputXML)
+        XCTAssertTrue(obj1.contains("x=\"1e0\""), "Covered vertices untouched. Got: \(obj1)")
+    }
 }
