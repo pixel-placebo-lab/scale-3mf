@@ -11,10 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AXorcist accessibility** — Added `accessibilityIdentifier`, `accessibilityLabel`, and `accessibilityValue` modifiers to scale controls, fastener type popup, mode selectors, action buttons, and file info. Enables remote UI reading via `axorc find --app Scale3MF --identifier <id>`.
 ### Added
 - **ROADMAP.md** — Project roadmap with completed milestones (v1.0–v1.4), near-term goals (tests, CI, batch mode), and long-term experimental features.
-- **Swift test target** — 36 unit tests covering ConversionTable (fallback data, scale factors, fastener types, metric/SAE dimension lookups, formatted tables, extrusion profiles) and Converter (transform scaling, vertex scaling, Z scaling, XML comment/self-closing tag preservation, error handling, result metadata).
+- **Swift test target** — 41 unit tests covering ConversionTable (fallback data, scale factors, fastener types, metric/SAE dimension lookups, formatted tables, extrusion profiles) and Converter (transform scaling, vertex scaling, Z scaling, XML comment/self-closing tag preservation, error handling, result metadata, plus Sep 2026 review-fix regressions: world-space S·M matrix scaling for rotated transforms, full Z-column scaling, mixed transform/vertex files, reordered vertex attributes, scientific notation).
 
 ### Changed
 - **Package.swift** — Added `Scale3MFTests` test target with JSON resource copies.
+- **scale_3mf.py extract/repackage routed through the shared 3mf-tooling library** (card ff043e2c) — `extract_3mf`/`repackage_3mf` now come from `~/Projects/3mf-tooling/3mf_lib.py` (gateway-absolute path), replacing the local zipfile blocks.
+- **Python regression tests** — new `test_scale_3mf.py` (7 unittest cases, also pytest-compatible) covering the same matrix/parity regressions as the Swift suite.
+
+### Fixed
+- **X/Y and Z scaling of rotated transforms sheared tilted objects** (Swift + Python) — scaling now applies a proper world-space scale to the whole transform matrix instead of patching individual elements. Per the 3MF core spec (§3.3), the transform is a row-major 4×3 matrix (`m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31 m32`; rows are basis-vector images, the last row is the translation, points are row-vectors), so world-space scaling scales each **column** by its axis factor (positions j, j+3, j+6, j+9). Previously the X/Y pass left m20/m21 unscaled and the Z pass left m02/m12 unscaled — any object rotated about a horizontal axis sheared/distorted (Sep 7 review findings 1–2; layout verified against the spec and real Bambu Studio exports).
+- **Mixed transform/vertex files silently scaled only part** (Sep 7 review finding 3) — vertex scaling is now decided per object: objects whose `<item>`/`<component>` reference carries a transform scale through the matrix (vertices protected from double-scaling); every other object scales via its vertices directly. Previously ANY transform in a file suppressed vertex scaling file-wide, so a second object placed without a transform stayed at its original size.
+- **Vertex attributes now parsed by name, not position** (Sep 7 review finding 4) — `<vertex>` x/y/z scale regardless of attribute order, extra attributes (e.g. `p1`) are preserved, and non-numeric values are left untouched (Swift + Python).
+- **Scientific notation parity** (Sep 7 review finding 5) — transform and vertex values like `1e0`/`2.5E-3` now scale in both CLIs. Python previously rejected scientific notation in transforms (silent no-op); Swift previously rejected it in vertices (a gap beyond the original finding — Swift transforms already accepted it).
 
 ## [1.4.0] - 2026-07-28
 
