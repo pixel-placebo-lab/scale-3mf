@@ -204,60 +204,84 @@ def scale_3mf(input_path, scale_xy=1.0, scale_z=1.0, output_path=None):
             with open(model_path, 'r', encoding='utf-8') as f:
                 xml_content = f.read()
 
+            # 3MF numbers: decimal of arbitrary precision (spec §3.3) — accept
+            # sign, leading/trailing decimal point, and exponent forms like 1e0.
+            num = r'[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?'
+
+            # transform="m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31 m32" —
+            # a row-major 4×3 matrix: rows 0–2 are the images of the basis
+            # vectors, row 3 is the translation (3MF core spec §3.3).
             transform_pattern = re.compile(
-                r'(transform=")([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+'
-                r'([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+'
-                r'([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+'
-                r'([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)(")'
+                rf'(transform=")({num})\s+({num})\s+({num})\s+'
+                rf'({num})\s+({num})\s+({num})\s+'
+                rf'({num})\s+({num})\s+({num})\s+'
+                rf'({num})\s+({num})\s+({num})(")'
             )
 
-            file_transforms = 0
-
             def replace_transform(m):
-                nonlocal total_transforms, file_transforms
+                nonlocal total_transforms
                 total_transforms += 1
-                file_transforms += 1
-                r00 = float(m.group(2)) * scale_xy
-                r01 = float(m.group(3)) * scale_xy
-                r02 = float(m.group(4))
-                r10 = float(m.group(5)) * scale_xy
-                r11 = float(m.group(6)) * scale_xy
-                r12 = float(m.group(7))
-                r20 = float(m.group(8))
-                r21 = float(m.group(9))
-                r22 = float(m.group(10))
-                if scale_z != 1.0:
-                    r22 *= scale_z
-                tx = float(m.group(11)) * scale_xy
-                ty = float(m.group(12)) * scale_xy
-                tz = float(m.group(13))
-                if scale_z != 1.0:
-                    tz *= scale_z
+                vals = [float(m.group(i)) for i in range(2, 14)]
+                # World-space (parent-frame) scaling is M·S on the row-major
+                # 4×3 matrix: column j (values at positions j, j+3, j+6, j+9)
+                # scales by the axis factor, so scaled geometry keeps its
+                # rotation without shear and the translation follows.
+                axis_scales = (scale_xy, scale_xy, scale_z)
+                out = [vals[i] * axis_scales[i % 3] for i in range(12)]
                 return (
                     f'{m.group(1)}'
-                    f'{r00:.6f} {r01:.6f} {r02:.6f} '
-                    f'{r10:.6f} {r11:.6f} {r12:.6f} '
-                    f'{r20:.6f} {r21:.6f} {r22:.6f} '
-                    f'{tx:.6f} {ty:.6f} {tz:.6f}'
-                    f'{m.group(14)}'
+                    + ' '.join(f'{v:.6f}' for v in out)
+                    + f'{m.group(14)}'
                 )
 
             new_xml = transform_pattern.sub(replace_transform, xml_content)
 
-            if file_transforms == 0:
-                vertex_pattern = re.compile(
-                    r'(<vertex\s+x=")([-\d.]+)("\s+y=")([-\d.]+)("\s+z=")([-\d.]+)("\s*/>)'
-                )
-                def replace_vertex(m):
-                    nonlocal total_vertices
+            # Vertex scaling is decided per object: an object placed by a
+            # transform-carrying <item>/<component> reference is scaled through
+            # its matrix (vertices untouched — no double scaling); every other
+            # object gets its vertices scaled directly.
+            ref_pattern = re.compile(r'<(?:item|component)\b([^>]*)>')
+            ref_objectid = re.compile(r'\bobjectid\s*=\s*"([^"]*)"')
+            transformed_ids = set()
+            for ref in ref_pattern.finditer(xml_content):
+                attrs = ref.group(1)
+                oid_m = ref_objectid.search(attrs)
+                if oid_m and re.search(r'\btransform\s*=', attrs):
+                    transformed_ids.add(oid_m.group(1))
+
+            object_pattern = re.compile(r'<object\b[^>]*>.*?</object>', re.DOTALL)
+            object_id = re.compile(r'\bid\s*=\s*"([^"]*)"')
+            vertex_tag = re.compile(r'<vertex\b[^>]*>')
+            vertex_attr = re.compile(r'\b([xyz])\s*=\s*"([^"]*)"')
+            vertex_axis_scale = {'x': scale_xy, 'y': scale_xy, 'z': scale_z}
+
+            def replace_vertex(m):
+                nonlocal total_vertices
+                tag = m.group(0)
+                scaled_axes = set()
+
+                def repl_attr(am):
+                    axis, raw = am.group(1), am.group(2)
+                    try:
+                        value = float(raw)
+                    except ValueError:
+                        return am.group(0)  # non-numeric value: leave untouched
+                    scaled_axes.add(axis)
+                    return f'{axis}="{value * vertex_axis_scale[axis]:.6f}"'
+
+                new_tag = vertex_attr.sub(repl_attr, tag)
+                if scaled_axes == {'x', 'y', 'z'}:
                     total_vertices += 1
-                    x = float(m.group(2)) * scale_xy
-                    y = float(m.group(4)) * scale_xy
-                    z = float(m.group(6))
-                    if scale_z != 1.0:
-                        z *= scale_z
-                    return f'{m.group(1)}{x:.6f}{m.group(3)}{y:.6f}{m.group(5)}{z:.6f}{m.group(7)}'
-                new_xml = vertex_pattern.sub(replace_vertex, new_xml)
+                return new_tag
+
+            def replace_object(m):
+                block = m.group(0)
+                oid_m = object_id.search(block)
+                if oid_m and oid_m.group(1) in transformed_ids:
+                    return block  # scaled via its transform matrix
+                return vertex_tag.sub(replace_vertex, block)
+
+            new_xml = object_pattern.sub(replace_object, new_xml)
 
             with open(model_path, 'w', encoding='utf-8') as f:
                 f.write(new_xml)

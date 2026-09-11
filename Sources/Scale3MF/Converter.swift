@@ -228,56 +228,94 @@ final class Converter {
     private static func scaleModelXML(_ data: Data, factor: Double, zFactor: Double = 1.0) -> (Data, Bool) {
         guard let xml = String(data: data, encoding: .utf8) else { return (data, false) }
 
-        // Transform pattern: transform="r00 r01 r02 r10 r11 r12 r20 r21 r22 tx ty tz"
+        // 3MF numbers: decimal of arbitrary precision (spec §3.3) — accept
+        // sign, leading/trailing decimal point, and exponent forms like 1e0.
+        // The outer parens make each interpolated element a capture group.
+        let num = "([-+]?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)(?:[eE][-+]?[0-9]+)?)"
+
+        // transform="m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31 m32" — a
+        // row-major 4×3 matrix: rows 0–2 are the images of the basis vectors,
+        // row 3 is the translation (3MF core spec §3.3).
         let transformPattern = try! NSRegularExpression(
-            pattern: "transform=\"(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\"",
+            pattern: "transform=\"\(num)\\s+\(num)\\s+\(num)\\s+\(num)\\s+\(num)\\s+\(num)\\s+\(num)\\s+\(num)\\s+\(num)\\s+\(num)\\s+\(num)\\s+\(num)",
             options: []
         )
 
-        // Vertex pattern: <vertex x="..." y="..." z="..."
-        let vertexPattern = try! NSRegularExpression(
-            pattern: "<vertex\\s+x=\"([-\\d. ]+)\"\\s+y=\"([-\\d. ]+)\"\\s+z=\"([-\\d. ]+)\"",
-            options: []
-        )
-
-        var transformScaled = false
+        var anyScaled = false
         var result = xml
 
-        // Scale transforms
+        // Scale transforms: world-space scaling is M·S on the row-major 4×3
+        // matrix — column j (values at indexes j, j+3, j+6, j+9) scales by its
+        // axis factor, so rotated objects scale without shear and the
+        // translation follows.
+        let axisScales = [factor, factor, zFactor]
         result = replaceMatches(pattern: transformPattern, in: result) { match, str in
-            transformScaled = true
-            func g(_ i: Int) -> Double {
-                guard let r = Range(match.range(at: i), in: str), let d = Double(str[r]) else { return 0 }
-                return d
+            guard let fullRange = Range(match.range, in: str) else { return "" }
+            let original = String(str[fullRange])
+            var vals = [Double](repeating: 0, count: 12)
+            for i in 0..<12 {
+                guard let r = Range(match.range(at: i + 1), in: str), let d = Double(str[r]) else {
+                    return original  // unparseable: leave the transform untouched
+                }
+                vals[i] = d
             }
-            let r00 = g(1) * factor, r01 = g(2) * factor, r02 = g(3)
-            let r10 = g(4) * factor, r11 = g(5) * factor, r12 = g(6)
-            let r20 = g(7), r21 = g(8)
-            var r22 = g(9)
-            var tx = g(10) * factor, ty = g(11) * factor, tz = g(12)
-            if zFactor != 1.0 { r22 *= zFactor; tz *= zFactor }
-            let fmt = { String(format: "%g", $0) }
-            return "transform=\"\(fmt(r00)) \(fmt(r01)) \(fmt(r02)) \(fmt(r10)) \(fmt(r11)) \(fmt(r12)) \(fmt(r20)) \(fmt(r21)) \(fmt(r22)) \(fmt(tx)) \(fmt(ty)) \(fmt(tz))\""
+            anyScaled = true
+            let out = (0..<12).map { String(format: "%g", vals[$0] * axisScales[$0 % 3]) }
+            return "transform=\"" + out.joined(separator: " ") + "\""
         }
 
-        // Scale vertices (only if no transforms were found in this file)
-        var vertexScaled = false
-        if !transformScaled {
-            result = replaceMatches(pattern: vertexPattern, in: result) { match, str in
-                vertexScaled = true
-                func g(_ i: Int) -> Double {
-                    guard let r = Range(match.range(at: i), in: str), let d = Double(str[r]) else { return 0 }
-                    return d
+        // Vertex scaling is decided per object: an object placed by a
+        // transform-carrying <item>/<component> reference is scaled through
+        // its matrix (vertices untouched — no double scaling); every other
+        // object gets its vertices scaled directly. x/y/z attributes are
+        // matched by name, so attribute order and extra attributes survive.
+        let refPattern = try! NSRegularExpression(pattern: "<(?:item|component)\\b([^>]*)>", options: [])
+        let refIdPattern = try! NSRegularExpression(pattern: "\\bobjectid\\s*=\\s*\"([^\"]*)\"", options: [])
+        let transformAttrPattern = try! NSRegularExpression(pattern: "\\btransform\\s*=", options: [])
+
+        var transformedIds = Set<String>()
+        refPattern.enumerateMatches(in: result, options: [], range: NSRange(location: 0, length: (result as NSString).length)) { match, _, _ in
+            guard let match = match, let attrsRange = Range(match.range(at: 1), in: result) else { return }
+            let attrs = String(result[attrsRange])
+            guard let idMatch = refIdPattern.firstMatch(in: attrs, options: [], range: NSRange(location: 0, length: (attrs as NSString).length)),
+                  let idRange = Range(idMatch.range(at: 1), in: attrs) else { return }
+            if transformAttrPattern.firstMatch(in: attrs, options: [], range: NSRange(location: 0, length: (attrs as NSString).length)) != nil {
+                transformedIds.insert(String(attrs[idRange]))
+            }
+        }
+
+        let objectPattern = try! NSRegularExpression(pattern: "<object\\b[^>]*>.*?</object>", options: [.dotMatchesLineSeparators])
+        let objectIdPattern = try! NSRegularExpression(pattern: "\\bid\\s*=\\s*\"([^\"]*)\"", options: [])
+        let vertexTagPattern = try! NSRegularExpression(pattern: "<vertex\\b[^>]*>", options: [])
+        let vertexAttrPattern = try! NSRegularExpression(pattern: "\\b([xyz])\\s*=\\s*\"([^\"]*)\"", options: [])
+
+        result = replaceMatches(pattern: objectPattern, in: result) { match, str in
+            guard let blockRange = Range(match.range, in: str) else { return "" }
+            let block = String(str[blockRange])
+            if let idMatch = objectIdPattern.firstMatch(in: block, options: [], range: NSRange(location: 0, length: (block as NSString).length)),
+               let idRange = Range(idMatch.range(at: 1), in: block),
+               transformedIds.contains(String(block[idRange])) {
+                return block  // scaled via its transform matrix
+            }
+            return replaceMatches(pattern: vertexTagPattern, in: block) { vmatch, vstr in
+                guard let tagRange = Range(vmatch.range, in: vstr) else { return "" }
+                let tag = String(vstr[tagRange])
+                return replaceMatches(pattern: vertexAttrPattern, in: tag) { amatch, astr in
+                    guard let axisRange = Range(amatch.range(at: 1), in: astr),
+                          let valueRange = Range(amatch.range(at: 2), in: astr) else { return "" }
+                    let axis = String(astr[axisRange])
+                    guard let value = Double(astr[valueRange]) else {
+                        return String(astr[Range(amatch.range, in: astr)!])  // non-numeric: untouched
+                    }
+                    anyScaled = true
+                    let scale = axis == "z" ? zFactor : factor
+                    return "\(axis)=\"\(String(format: "%g", value * scale))\""
                 }
-                let sx = g(1) * factor, sy = g(2) * factor
-                let sz = zFactor != 1.0 ? g(3) * zFactor : g(3)
-                let fmt = { String(format: "%g", $0) }
-                return "<vertex x=\"\(fmt(sx))\" y=\"\(fmt(sy))\" z=\"\(fmt(sz))\""
             }
         }
 
         let scaledData = result.data(using: .utf8) ?? data
-        return (scaledData, transformScaled || vertexScaled)
+        return (scaledData, anyScaled)
     }
 
     private static func replaceMatches(pattern: NSRegularExpression, in string: String,
