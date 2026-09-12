@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Python CLI batch mode** (card 1e6f387a) — `scale_3mf.py <dir> --dir` (alias `--batch`) scales every `.3mf` in a directory with a single scale factor or fastener size, honoring the same `--sae`/`--metric`/`--factor`/`--profile-scale` scale sources as single-file mode. Optional `--output-dir` writes scaled files into a separate folder (default: alongside each source). Dry-run works per file. A failing file is reported and skipped without aborting the rest. Tests: 5 new pytest cases (dry-run writes nothing, all files processed, output-dir honored, non-dir and empty-dir errors).
+
+### Added
 - **AXorcist accessibility** — Added `accessibilityIdentifier`, `accessibilityLabel`, and `accessibilityValue` modifiers to scale controls, fastener type popup, mode selectors, action buttons, and file info. Enables remote UI reading via `axorc find --app Scale3MF --identifier <id>`.
 ### Added
 - **ROADMAP.md** — Project roadmap with completed milestones (v1.0–v1.4), near-term goals (tests, CI, batch mode), and long-term experimental features.

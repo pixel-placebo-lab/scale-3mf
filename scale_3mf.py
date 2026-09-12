@@ -301,6 +301,61 @@ def scale_3mf(input_path, scale_xy=1.0, scale_z=1.0, output_path=None):
     return output_path
 
 
+def process_batch(dir_path, scale_xy=1.0, scale_z=1.0, output_dir=None, dry_run=False):
+    """Scale every *.3mf file in a directory.
+
+    Returns (processed, failed) counts and writes scaled files into
+    ``output_dir`` (default: alongside each source file, reusing the
+    single-file naming scheme) or only prints a plan when ``dry_run``.
+    """
+    target = output_dir or dir_path
+    if not os.path.isdir(dir_path):
+        sys.exit(f"Error: Not a directory: {dir_path}")
+
+    files = sorted(
+        f for f in os.listdir(dir_path)
+        if f.lower().endswith('.3mf') and os.path.isfile(os.path.join(dir_path, f))
+    )
+    if not files:
+        sys.exit(f"Error: No .3mf files found in {dir_path}")
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    suffix = f"_s{scale_xy:.3f}"
+    if scale_z != 1.0:
+        suffix += f"_z{scale_z:.3f}"
+
+    processed = 0
+    failed = 0
+    print(f"Batch mode: scaling X/Y = {scale_xy:.4f}, Z = {scale_z:.4f}")
+    print(f"  Dir: {dir_path}")
+    print(f"  Files: {len(files)}")
+    if dry_run:
+        print("(dry run — no output written)")
+
+    for name in files:
+        src = os.path.join(dir_path, name)
+        base, ext = os.path.splitext(name)
+        out_name = f"{base}{suffix}{ext}"
+        dst = os.path.join(target, out_name)
+        print(f"  {name} -> {out_name}")
+        if dry_run:
+            continue
+        try:
+            scale_3mf(src, scale_xy=scale_xy, scale_z=scale_z, output_path=dst)
+            processed += 1
+        except SystemExit:
+            raise
+        except Exception as e:  # noqa: BLE001 — keep batch going past a bad file
+            print(f"  ⚠️  FAILED: {name}: {e}")
+            failed += 1
+
+    if not dry_run:
+        print(f"Batch complete: {processed} processed, {failed} failed")
+    return processed, failed
+
+
 def print_profile_table():
     """Print the 8020 extrusion profile scaling presets with slot analysis."""
     print("\n8020 Aluminum Extrusion — Profile Scaling Presets")
@@ -385,13 +440,16 @@ Examples:
   %(prog)s model.3mf --profile-scale 2020-to-1010
   %(prog)s model.3mf --profile-scale 2020-to-1010 --slot-fix
 """)
-    parser.add_argument('input', nargs='?', help='Input 3MF file')
+    parser.add_argument('input', nargs='?', help='Input 3MF file (or directory with --batch)')
     parser.add_argument('--sae', help='SAE bolt size (e.g. 5/16, 3/8, 1/2)')
     parser.add_argument('--metric', help='Metric bolt size (e.g. M8, M10)')
     parser.add_argument('--fastener-type', default='hex_head', choices=FASTENER_TYPES, help='Fastener type (default: hex_head)')
     parser.add_argument('--factor', type=float, help='Manual scale factor for X/Y')
     parser.add_argument('--z', type=float, default=1.0, help='Z scale factor (default: 1.0)')
     parser.add_argument('--output', '-o', help='Output 3MF file path')
+    parser.add_argument('--batch', '--dir', dest='batch', action='store_true',
+                        help='Process a directory of .3mf files (use --sae/--metric/--factor/--profile-scale for the scale)')
+    parser.add_argument('--output-dir', help='Output directory for --batch (default: input dir)')
     parser.add_argument('--table', action='store_true', help='Print conversion table and exit')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be done without writing')
     parser.add_argument('--profile-table', action='store_true', help='Print 8020 extrusion profile table and exit')
@@ -432,6 +490,12 @@ Examples:
                 print("  💡 Slot-fix tip: design in OpenSCAD with separate slot parameters for a perfect fit.")
         print(f"\nScaling: X/Y = {scale_xy:.4f}, Z = {args.z:.4f}")
         print(f"Input: {args.input}")
+        if args.batch:
+            if not os.path.isdir(args.input):
+                sys.exit(f"Error: --batch requires a directory, got: {args.input}")
+            process_batch(args.input, scale_xy=scale_xy, scale_z=args.z,
+                          output_dir=args.output_dir, dry_run=args.dry_run)
+            return
         if args.dry_run:
             print("(dry run — no output written)")
             return
@@ -459,6 +523,17 @@ Examples:
 
     print(f"\nScaling: X/Y = {scale_xy:.4f}, Z = {args.z:.4f}")
     print(f"Input: {args.input}")
+
+    if args.batch:
+        print(f"\nBatch dir: {args.input}")
+        if args.dry_run:
+            print("(dry run — no output written)")
+            process_batch(args.input, scale_xy=scale_xy, scale_z=args.z,
+                          output_dir=args.output_dir, dry_run=True)
+            return
+        process_batch(args.input, scale_xy=scale_xy, scale_z=args.z,
+                      output_dir=args.output_dir, dry_run=False)
+        return
 
     if args.dry_run:
         print("(dry run — no output written)")

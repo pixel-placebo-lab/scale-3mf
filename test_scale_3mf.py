@@ -246,6 +246,70 @@ class Scale3MFTests(unittest.TestCase):
             for member in ('[Content_Types].xml', '_rels/.rels', '3D/3dmodel.model'):
                 self.assertIn(member, zf.namelist())
 
+    # ── Batch mode ────────────────────────────────────────────────────
+
+    def make_batch_dir(self, names):
+        d = os.path.join(self.workdir, 'batch_in')
+        os.makedirs(d, exist_ok=True)
+        for i, n in enumerate(names):
+            xml = MODEL_HEAD + (
+                '<resources>'
+                '<object id="1" type="model"><mesh><vertices>'
+                f'<vertex x="{i+1}" y="2" z="3"/>'
+                '</vertices><triangles><triangle v1="0" v2="0" v3="0"/></triangles></mesh></object>'
+                '</resources><build><item objectid="1"/></build>'
+                '</model>')
+            self.make_3mf(os.path.join('batch_in', n), xml)
+        return d
+
+    def test_batch_dry_run_creates_no_output(self):
+        d = self.make_batch_dir(['a.3mf', 'b.3mf', 'c.3mf'])
+        before = sorted(os.listdir(d))
+        with contextlib.redirect_stdout(io.StringIO()):
+            processed, failed = scale_3mf_mod.process_batch(
+                d, scale_xy=2.0, dry_run=True)
+        self.assertEqual(processed, 0)
+        self.assertEqual(failed, 0)
+        self.assertEqual(sorted(os.listdir(d)), before)
+
+    def test_batch_processes_all_3mf_files(self):
+        d = self.make_batch_dir(['a.3mf', 'b.3mf', 'c.3mf'])
+        with contextlib.redirect_stdout(io.StringIO()):
+            processed, failed = scale_3mf_mod.process_batch(d, scale_xy=2.0)
+        self.assertEqual(processed, 3)
+        self.assertEqual(failed, 0)
+        # Each scaled output doubles BOTH x and y (vertex-based file).
+        expect = {'a_s2.000.3mf': 'x="2.000000" y="4.000000"',
+                  'b_s2.000.3mf': 'x="4.000000" y="4.000000"',
+                  'c_s2.000.3mf': 'x="6.000000" y="4.000000"'}
+        for name, marker in expect.items():
+            xml = self.read_model(os.path.join(d, name))
+            self.assertIn(marker, xml)
+
+    def test_batch_respects_output_dir(self):
+        d = self.make_batch_dir(['a.3mf', 'b.3mf'])
+        outdir = os.path.join(self.workdir, 'batch_out')
+        with contextlib.redirect_stdout(io.StringIO()):
+            processed, _ = scale_3mf_mod.process_batch(
+                d, scale_xy=2.0, output_dir=outdir)
+        self.assertEqual(processed, 2)
+        self.assertEqual(sorted(os.listdir(d)), ['a.3mf', 'b.3mf'])
+        self.assertEqual(len(os.listdir(outdir)), 2)
+        self.assertTrue(all(f.endswith('.3mf') for f in os.listdir(outdir)))
+
+    def test_batch_fails_on_non_directory(self):
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stdout(io.StringIO()):
+                scale_3mf_mod.process_batch(
+                    os.path.join(self.workdir, 'missing'), scale_xy=2.0)
+
+    def test_batch_no_3mf_raises(self):
+        d = os.path.join(self.workdir, 'empty_dir')
+        os.makedirs(d, exist_ok=True)
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stdout(io.StringIO()):
+                scale_3mf_mod.process_batch(d, scale_xy=2.0)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

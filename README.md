@@ -106,6 +106,18 @@ python3 scale_3mf.py model.3mf --sae 5/16 -o my_t_handle.3mf
 # Dry run
 python3 scale_3mf.py model.3mf --sae 5/16 --dry-run
 
+# Batch — scale every .3mf in a directory with one factor
+python3 scale_3mf.py ./parts/ --dir --factor 0.977
+
+# Batch with a fastener size (single source of truth for all files)
+python3 scale_3mf.py ./parts/ --dir --sae 5/16
+
+# Batch into a separate output directory
+python3 scale_3mf.py ./parts/ --dir --factor 0.977 --output-dir ./output/
+
+# Batch 8020 profile scaling
+python3 scale_3mf.py ./extrusions/ --dir --profile-scale 2020-to-1010
+
 # Metric-to-metric resize
 python3 scale_3mf.py model.3mf --metric M8 --target-metric M10
 
