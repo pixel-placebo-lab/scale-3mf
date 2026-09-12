@@ -140,8 +140,10 @@ def compute_scale(sae_size, metric_size=None, fastener_type="hex_head", dim_data
             if entry.get("thread") == sae_size:
                 if metric_size is None:
                     metric_size = entry.get("closest_metric", "")
-                # Find the metric entry
-                metric_key = f"m{metric_size.lower()}"
+                # Find the metric entry — dict keys are already lowercase 'm<size>'
+                # (e.g. 'm6', 'm8'), so metric_size.lower() alone gives the key.
+                # (Prefixing another 'm' produced 'mm6' and skipped the lookup.)
+                metric_key = metric_size.lower()
                 metric_entry = cat.get(metric_key, {})
                 
                 if fastener_type in ("hex_head", "hex_nut", "nylock_nut"):
