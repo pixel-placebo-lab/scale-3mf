@@ -10,6 +10,8 @@ Areas covered:
   3. 3MF round-trip integrity — scale a generated 3MF, reload, verify dims
   4. Vertex-fallback paths
   5. Error paths             — bad input file, missing args, unknown sizes
+  6. Batch mode             — continue past bad files, nonzero exit code,
+                               rerun skips previous outputs, --output rejection
 
 Run with:  python3 -m pytest tests/ -q
 """
@@ -347,3 +349,68 @@ class TestErrorPaths:
         code, out, err = run_cli("--profile-scale", "bogus-profile")
         assert code == 1
         assert "Unknown profile preset" in (out + err)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 6. Batch mode (card 1afb4e4a)
+# ──────────────────────────────────────────────────────────────────────
+
+def _model_xml_from_3mf(path):
+    """Read 3D/3dmodel.model back out of a written 3MF package."""
+    with zipfile.ZipFile(path) as zf:
+        return zf.read('3D/3dmodel.model').decode('utf-8')
+
+
+class TestBatchMode:
+    def test_batch_continues_past_bad_file_and_exits_nonzero(
+            self, run_cli, tmp_path, model_cube):
+        """One structurally-bad 3MF must not abort the batch (card 1afb4e4a):
+        the good file still scales, the bad file is reported with its reason,
+        the batch completes, and the process exits nonzero."""
+        in_dir = tmp_path / "in"
+        in_dir.mkdir()
+        (in_dir / "good.3mf").write_bytes(make_3mf_zip(model_cube))
+        with zipfile.ZipFile(in_dir / "broken.3mf", 'w') as zf:
+            zf.writestr('random.txt', 'not a 3mf')  # no 3D/ dir
+
+        code, out, err = run_cli(str(in_dir), '--batch', '--factor', '0.5')
+
+        assert "Batch complete: 1 processed, 1 failed" in out
+        assert "FAILED: broken.3mf" in out
+        assert "No 3D/ directory" in out  # per-file reason surfaced
+        assert code == 1
+
+        good_out = in_dir / "good_s0.500.3mf"
+        assert good_out.exists()
+        assert 'x="5.000000"' in _model_xml_from_3mf(good_out)
+
+    def test_batch_rerun_skips_previous_outputs(self, run_cli, tmp_path, model_cube):
+        """Rerunning a batch must not double-scale earlier outputs (card
+        1afb4e4a): run 2 skips the *_s0.500.3mf file and reprocesses only
+        the original input."""
+        in_dir = tmp_path / "in"
+        in_dir.mkdir()
+        (in_dir / "a.3mf").write_bytes(make_3mf_zip(model_cube))
+
+        code, out, err = run_cli(str(in_dir), '--batch', '--factor', '0.5')
+        assert code == 0
+        assert (in_dir / "a_s0.500.3mf").exists()
+
+        code, out, err = run_cli(str(in_dir), '--batch', '--factor', '0.5')
+        assert code == 0
+        assert "Files: 1" in out  # the previous output was skipped
+        assert "Batch complete: 1 processed, 0 failed" in out
+        assert not (in_dir / "a_s0.500_s0.500.3mf").exists()
+
+        # Still single-scaled: 10 × 0.5 = 5, not 2.5.
+        model = _model_xml_from_3mf(in_dir / "a_s0.500.3mf")
+        assert 'x="5.000000"' in model
+        assert 'x="2.500000"' not in model
+
+    def test_batch_rejects_single_output_flag(self, run_cli, tmp_path):
+        """--output names one file; with --batch it must be rejected loudly
+        instead of silently ignored (card 1afb4e4a)."""
+        code, out, err = run_cli(str(tmp_path), '--batch', '--factor', '1.0',
+                                '--output', 'x.3mf')
+        assert code == 1
+        assert "--output-dir" in (out + err)

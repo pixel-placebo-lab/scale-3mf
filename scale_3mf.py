@@ -18,7 +18,30 @@ import importlib.util
 # Shared 3MF library — extract_3mf / repackage_3mf (3mf-tooling family
 # consolidation, card ff043e2c). The regex-based transform/vertex rewrite below
 # is deliberately string-preserving and stays local to this script.
-_LIB_PATH = '/Users/sulk_imac/Projects/3mf-tooling/3mf_lib.py'
+# Lib resolution (card 1afb4e4a): $SCALE_3MF_LIB override first, then a
+# candidate list — vendored next to this script, ~/Projects/3mf-tooling/
+# (any username), then the two legacy absolute paths.
+def _resolve_lib_path():
+    candidates = []
+    env = os.environ.get('SCALE_3MF_LIB')
+    if env:
+        candidates.append(env)
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.join(repo_dir, '3mf_lib.py'))
+    candidates.append(os.path.expanduser('~/Projects/3mf-tooling/3mf_lib.py'))
+    candidates.append('/Users/sulk_imac/Projects/3mf-tooling/3mf_lib.py')
+    candidates.append('/Users/sulk/Projects/3mf-tooling/3mf_lib.py')
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    sys.exit(
+        "Error: 3mf_lib.py not found — set $SCALE_3MF_LIB, or place "
+        "3mf_lib.py next to scale_3mf.py, or check out 3mf-tooling under "
+        "~/Projects/3mf-tooling."
+    )
+
+
+_LIB_PATH = _resolve_lib_path()
 _spec = importlib.util.spec_from_file_location('mf_lib', _LIB_PATH)
 lib = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lib)
@@ -316,21 +339,30 @@ def process_batch(dir_path, scale_xy=1.0, scale_z=1.0, output_dir=None, dry_run=
         f for f in os.listdir(dir_path)
         if f.lower().endswith('.3mf') and os.path.isfile(os.path.join(dir_path, f))
     )
-    if not files:
-        sys.exit(f"Error: No .3mf files found in {dir_path}")
-
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
 
     suffix = f"_s{scale_xy:.3f}"
     if scale_z != 1.0:
         suffix += f"_z{scale_z:.3f}"
+
+    # A previous batch run with the same scale leaves *<suffix>.3mf files in
+    # this directory; re-globbing them would double-scale them (card
+    # 1afb4e4a). Skip anything already carrying this run's suffix.
+    skipped = sorted(f for f in files if f.lower().endswith(suffix.lower() + '.3mf'))
+    files = [f for f in files if f not in skipped]
+
+    if not files and not skipped:
+        sys.exit(f"Error: No .3mf files found in {dir_path}")
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
     processed = 0
     failed = 0
     print(f"Batch mode: scaling X/Y = {scale_xy:.4f}, Z = {scale_z:.4f}")
     print(f"  Dir: {dir_path}")
     print(f"  Files: {len(files)}")
+    for f in skipped:
+        print(f"  {f} — skipped (previous output of this same scale)")
     if dry_run:
         print("(dry run — no output written)")
 
@@ -345,8 +377,13 @@ def process_batch(dir_path, scale_xy=1.0, scale_z=1.0, output_dir=None, dry_run=
         try:
             scale_3mf(src, scale_xy=scale_xy, scale_z=scale_z, output_path=dst)
             processed += 1
-        except SystemExit:
-            raise
+        except SystemExit as e:
+            # scale_3mf() reports structural problems (missing 3D/ dir, no
+            # .model file) via sys.exit(message) — a per-file failure, not a
+            # reason to abort the rest of the batch (card 1afb4e4a).
+            reason = e.code if isinstance(e.code, str) else f"aborted (exit {e.code})"
+            print(f"  ⚠️  FAILED: {name}: {reason}")
+            failed += 1
         except Exception as e:  # noqa: BLE001 — keep batch going past a bad file
             print(f"  ⚠️  FAILED: {name}: {e}")
             failed += 1
@@ -458,6 +495,10 @@ Examples:
 
     args = parser.parse_args()
 
+    if args.output and args.batch:
+        sys.exit("Error: --output/-o names a single output file and cannot be "
+                 "combined with --batch; use --output-dir instead")
+
     if args.table:
         print_conversion_table(dim_data, args.fastener_type)
         return
@@ -493,8 +534,10 @@ Examples:
         if args.batch:
             if not os.path.isdir(args.input):
                 sys.exit(f"Error: --batch requires a directory, got: {args.input}")
-            process_batch(args.input, scale_xy=scale_xy, scale_z=args.z,
-                          output_dir=args.output_dir, dry_run=args.dry_run)
+            processed, failed = process_batch(args.input, scale_xy=scale_xy, scale_z=args.z,
+                                              output_dir=args.output_dir, dry_run=args.dry_run)
+            if failed:
+                sys.exit(1)
             return
         if args.dry_run:
             print("(dry run — no output written)")
@@ -526,13 +569,10 @@ Examples:
 
     if args.batch:
         print(f"\nBatch dir: {args.input}")
-        if args.dry_run:
-            print("(dry run — no output written)")
-            process_batch(args.input, scale_xy=scale_xy, scale_z=args.z,
-                          output_dir=args.output_dir, dry_run=True)
-            return
-        process_batch(args.input, scale_xy=scale_xy, scale_z=args.z,
-                      output_dir=args.output_dir, dry_run=False)
+        processed, failed = process_batch(args.input, scale_xy=scale_xy, scale_z=args.z,
+                                          output_dir=args.output_dir, dry_run=args.dry_run)
+        if failed:
+            sys.exit(1)
         return
 
     if args.dry_run:
