@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0] - 2026-09-26
 
 ### Added
 - **Python CLI batch mode** (card 1e6f387a) — `scale_3mf.py <dir> --dir` (alias `--batch`) scales every `.3mf` in a directory with a single scale factor or fastener size, honoring the same `--sae`/`--metric`/`--factor`/`--profile-scale` scale sources as single-file mode. Optional `--output-dir` writes scaled files into a separate folder (default: alongside each source). Dry-run works per file. A failing file is reported and skipped without aborting the rest. Tests: 5 new pytest cases (dry-run writes nothing, all files processed, output-dir honored, non-dir and empty-dir errors).
